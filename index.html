@@ -1,0 +1,1386 @@
+<!doctype html>
+<html lang="ru">
+<!-- Обёртка песочницы для отдельного сайта (решение 2026-11-06): страница та же, что на claude.ai, но как приложение
+     с экрана «Домой» — без панелей Safari, во весь экран. Скрипт сборки — tools/WebSandbox/site/build-site.sh. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Лесополоса">
+<meta name="theme-color" content="#0d100c">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<meta charset="utf-8">
+<title>Лесополоса — песочница</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=PT+Mono&family=PT+Sans+Narrow:wght@400;700&display=swap">
+<style>
+/* Полевой планшет в горизонтальной ориентации: слева — колонка отряда, в центре — карта во всю высоту,
+   справа — приказы с «Конец хода» внизу под большим пальцем. Квадратные края, волосяные рамки, подписи капителью —
+   как на штабной карте. Одна тёмная тема намеренно: та же палитра поля, что у вида сверху в Godot. */
+:root {
+  --bg: #0d100c;        /* под картой и экранами */
+  --panel: #141912;     /* колонки */
+  --raise: #1b2118;     /* кнопки, строки */
+  --hi: #252d21;        /* выбранное */
+  --line: #2b3427;      /* рамки */
+  --line2: #44513d;     /* рамка под пальцем */
+  --fg: #e1e5d5; --muted: #929c87; --dim: #687262;
+  --accent: #e4cc74;    /* главное действие, выбор — песочный, не цвет лент */
+  --ink: #1a170b;       /* текст на акценте */
+  --player: #ecd77a; --enemy: #cc5a4e;
+  --good: #7db77f; --warn: #e0a63a; --bad: #e9675a; --info: #7fc2f0;
+  --f-ui: "PT Sans Narrow", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --f-num: "PT Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --cut: 9px;           /* срезанный угол главной кнопки */
+  --side-l: max(16px, env(safe-area-inset-left, 0px));
+  --side-r: max(16px, env(safe-area-inset-right, 0px));
+  color-scheme: dark;
+}
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.3 var(--f-ui); overflow: hidden; -webkit-text-size-adjust: 100%; }
+button, select { font: inherit; color: inherit; }
+button { background: var(--raise); border: 1px solid var(--line); border-radius: 2px; padding: 3px 10px; min-height: 36px;
+  cursor: pointer; touch-action: manipulation; }
+button:hover:not(:disabled) { border-color: var(--line2); }
+button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+button:disabled { opacity: .35; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--ink); font-weight: 700; text-transform: uppercase;
+  letter-spacing: .08em; clip-path: polygon(0 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% 100%, 0 100%); }
+button.danger { background: transparent; border-color: var(--bad); color: var(--bad); font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+button.ghost { background: transparent; }
+select { background: var(--raise); border: 1px solid var(--line); border-radius: 2px; min-height: 34px; padding: 2px 6px; width: 100%; }
+.cap, .label { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); font-weight: 700; }
+.num { font-family: var(--f-num); font-variant-numeric: tabular-nums; }
+.note { font-size: 13px; color: var(--muted); margin: 0; }
+
+/* ───────── Бой ───────── */
+#app { height: 100%; display: grid; grid-template-columns: auto minmax(0, 1fr) 300px; grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: "rail map panel"; }
+
+/* Отряд — колонка слева */
+#rail { grid-area: rail; background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; min-height: 0;
+  padding-block: calc(8px + env(safe-area-inset-top, 0px)) calc(8px + env(safe-area-inset-bottom, 0px));
+  padding-left: var(--side-l); padding-right: 8px; }
+#squad { display: flex; flex-direction: column; gap: 5px; }
+.soldier { position: relative; width: 96px; display: grid; gap: 3px; text-align: left; padding: 5px 6px; min-height: 0; }
+.soldier[aria-pressed="true"] { background: var(--hi); border-color: var(--line2); }
+.soldier[aria-pressed="true"]::before, .soldier[aria-pressed="true"]::after { content: ""; position: absolute; width: 7px; height: 7px; border: 0 solid var(--accent); }
+.soldier[aria-pressed="true"]::before { top: -1px; left: -1px; border-top-width: 2px; border-left-width: 2px; }
+.soldier[aria-pressed="true"]::after { bottom: -1px; right: -1px; border-bottom-width: 2px; border-right-width: 2px; }
+.soldier .top { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.soldier .tier, .tierDot { flex: none; width: 16px; height: 16px; background: var(--player); color: var(--ink); font: 700 11px/16px var(--f-ui); text-align: center; }
+.soldier .name { font-weight: 700; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.soldier .hp { height: 3px; background: #000a; overflow: hidden; }
+.soldier .hp i { display: block; height: 100%; background: var(--good); }
+.soldier .meta { font: 11px var(--f-num); color: var(--muted); display: flex; justify-content: space-between; gap: 4px; }
+.soldier .meta .st-warn { color: var(--warn); } .soldier .meta .st-bad { color: var(--bad); }
+.soldier.out { opacity: .4; }
+
+/* Карта и то, что лежит поверх неё по краям */
+#mapWrap { grid-area: map; position: relative; min-height: 0; min-width: 0; overflow: hidden; touch-action: none; background: #0a0d0a; }
+#map { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#loading { position: absolute; inset: 0; z-index: 3; display: grid; place-items: center; text-align: center; padding: 24px; background: var(--bg); }
+#loading div { display: grid; gap: 10px; max-width: 30em; }
+#loading h2 { margin: 0; font-size: 20px; text-transform: uppercase; letter-spacing: .08em; }
+#loading p { margin: 0; color: var(--muted); }
+#loading pre { white-space: pre-wrap; text-align: left; font: 12px var(--f-num); color: var(--warn); max-height: 40vh; overflow: auto; }
+#ticker { position: absolute; left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom, 0px)); display: flex; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--fg); background: rgba(13,16,12,.82); border: 1px solid var(--line); padding: 2px 2px 2px 8px; }
+#ticker span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#ticker button { min-height: 28px; padding: 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
+#debugChip { position: absolute; top: calc(8px + env(safe-area-inset-top, 0px)); left: 8px; font-size: 12px; min-height: 28px; padding: 0 8px;
+  border-color: var(--info); color: var(--info); background: rgba(13,16,12,.82); white-space: nowrap; }
+
+/* Приказы — колонка справа */
+#panel { grid-area: panel; background: var(--panel); border-left: 1px solid var(--line); min-height: 0; display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto; gap: 8px;
+  padding-block: calc(8px + env(safe-area-inset-top, 0px)) calc(8px + env(safe-area-inset-bottom, 0px));
+  padding-left: 12px; padding-right: var(--side-r); }
+.bar { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.mission { flex: 1; min-width: 0; display: grid; }
+.mission b { font-size: 15px; text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mission span { font: 12px var(--f-num); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mission span .who-turn { color: var(--accent); }
+.mission span .who-turn.enemy { color: var(--enemy); }
+#menuBtn { min-height: 32px; padding: 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: .1em; }
+#endTurn { min-height: 44px; font-size: 15px; }
+
+/* Цель / подсказка */
+#context { min-height: 0; overflow-y: auto; display: grid; gap: 6px; align-content: start; background: var(--raise); border: 1px solid var(--line); padding: 8px; }
+#context.hint { background: transparent; border-color: transparent; border-top-color: var(--line); padding: 8px 0 0; color: var(--muted); font-size: 13px;
+  display: flex; flex-wrap: wrap; align-items: flex-start; align-content: flex-start; gap: 6px; }
+#context.hint span { flex: 1 1 100%; min-width: 0; }
+#context.hint .profile { font: 11px/1.4 var(--f-num); color: var(--dim); }
+#context.hint button { flex: 1 1 auto; min-height: 32px; font-size: 13px; }
+#context.hint button small { color: var(--muted); }
+#context .head { display: flex; align-items: center; gap: 8px; }
+#context .head > div { flex: 1; min-width: 0; }
+#context .big { font: 700 24px var(--f-num); color: var(--accent); line-height: 1.05; }
+#context .sub { font-size: 13px; color: var(--muted); }
+#context .actions { display: flex; gap: 6px; flex: none; }
+#context .actions button { min-height: 40px; }
+#context .aimRow { margin-top: 4px; }
+#context .err { color: var(--warn); font-size: 13px; }
+#context details { font-size: 12.5px; color: var(--muted); }
+#context details summary { cursor: pointer; text-transform: uppercase; letter-spacing: .08em; font-size: 11px; }
+#context ul { margin: 4px 0 0; padding: 0; list-style: none; }
+#context li { display: flex; justify-content: space-between; gap: 6px; border-bottom: 1px solid var(--line); padding: 1px 0; }
+#context li span:last-child { font-family: var(--f-num); color: var(--fg); }
+.enemyName { color: var(--enemy); font-weight: 700; }
+
+/* Переключатели */
+.rows { display: grid; gap: 5px; }
+.seg { display: flex; border: 1px solid var(--line); min-width: 0; }
+.seg button { flex: 1; border: 0; border-radius: 0; min-height: 32px; padding: 2px 3px; font-size: 13px; background: var(--raise);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--hi); color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
+.seg button small { font: 10px var(--f-num); color: var(--muted); margin-left: 3px; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+
+/* Вертикальный экран — запасной: карта сверху, отряд строкой, приказы снизу */
+@media (orientation: portrait) {
+  #app { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto auto; grid-template-areas: "map" "rail" "panel"; }
+  #rail { border-right: 0; border-top: 1px solid var(--line); padding-block: 6px; padding-right: var(--side-r); }
+  #squad { flex-direction: row; }
+  .soldier { flex: 1; width: auto; min-width: 0; }
+  #panel { border-left: 0; padding-left: var(--side-l); max-height: 46vh; grid-template-rows: auto auto auto auto; }
+  #context { max-height: 22vh; }
+}
+
+/* Листы меню и журнала: справа во всю высоту (вертикально — снизу) */
+.sheetBack { position: fixed; inset: 0; background: #000a; z-index: 40; }
+.sheet { position: fixed; top: 0; right: 0; bottom: 0; z-index: 41; width: min(400px, 92vw); overflow-y: auto; background: var(--panel);
+  border-left: 1px solid var(--line2); display: grid; gap: 14px; align-content: start;
+  padding-block: calc(12px + env(safe-area-inset-top, 0px)) calc(16px + env(safe-area-inset-bottom, 0px));
+  padding-left: 16px; padding-right: var(--side-r); }
+@media (orientation: portrait) {
+  .sheet { top: auto; left: 0; width: auto; max-height: 72vh; border-left: 0; border-top: 1px solid var(--line2); padding-left: var(--side-l); }
+}
+.sheet header { display: flex; align-items: center; gap: 8px; }
+.sheet header h2 { flex: 1; margin: 0; font-size: 16px; text-transform: uppercase; letter-spacing: .1em; }
+.sheet section { display: grid; gap: 8px; }
+.sheet h3 { margin: 0; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); font-weight: 700;
+  border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+.sheet .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+.sheet .grid3 button { min-height: 34px; font-size: 13px; }
+.sheet .grid3 button[aria-pressed="true"] { border-color: var(--info); color: var(--info); }
+#fullLog { font-size: 13px; display: grid; gap: 2px; }
+#fullLog p { margin: 0; }
+.legend { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; font-size: 13px; color: var(--muted); align-items: center; margin: 0; }
+.legend dt { display: flex; justify-content: center; }
+.legend dd { margin: 0; }
+.dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+.ring { width: 12px; height: 12px; border-radius: 50%; display: inline-block; border: 2px solid var(--enemy); }
+.swatch { width: 16px; height: 4px; display: inline-block; }
+.swatch.bush { height: 5px; background: repeating-linear-gradient(90deg, #7fb064 0 4px, transparent 4px 6px); }
+.trunk { width: 14px; height: 14px; border-radius: 50%; display: inline-block; background: #5b4632; box-shadow: 0 0 0 4px rgba(46,82,40,0.6); }
+.pit { width: 14px; height: 14px; display: inline-block; background: #6e5f47; box-shadow: inset 0 0 0 3px rgba(0,0,0,0.45); }
+.shield { width: 12px; height: 14px; display: inline-block; background: var(--good); clip-path: polygon(50% 0, 100% 18%, 100% 55%, 50% 100%, 0 55%, 0 18%); }
+.cov-full { color: var(--good); } .cov-part { color: var(--warn); } .cov-none { color: var(--bad); } .cov-pot { color: var(--muted); }
+#decisions { display: grid; gap: 6px; font-size: 12.5px; }
+#decisions .d { background: var(--raise); border: 1px solid var(--line); padding: 6px 8px; cursor: pointer; text-align: left; }
+#decisions .d[aria-selected="true"] { border-color: var(--enemy); }
+#decisions .d b { color: var(--enemy); }
+#decisions ol { margin: 4px 0 0; padding-left: 18px; color: var(--muted); }
+#decisions li.chosen { color: var(--fg); }
+#decisions .t { font-family: var(--f-num); font-size: 11.5px; color: var(--muted); }
+
+/* ───────── Кампания: главный экран, база, итоги ─────────
+   Экран — три полосы: сверху сводка и вкладки, в середине две колонки (каждая листается сама), снизу — главное действие. */
+.screen { position: fixed; inset: 0; z-index: 30; background: var(--bg); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
+.sbar, .sfoot { display: flex; align-items: center; gap: 10px; min-width: 0; background: var(--panel); padding-left: var(--side-l); padding-right: var(--side-r); }
+.sbar { border-bottom: 1px solid var(--line); padding-block: calc(6px + env(safe-area-inset-top, 0px)) 6px; }
+.sfoot { border-top: 1px solid var(--line); padding-block: 6px calc(6px + env(safe-area-inset-bottom, 0px)); }
+.sfoot .grow, .sbar .grow { flex: 1; min-width: 0; }
+.sfoot .primary { min-height: 42px; padding-inline: 18px 22px; }
+.sbody { min-height: 0; display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); }
+.sbody > .col { min-height: 0; min-width: 0; overflow-y: auto; display: grid; gap: 8px; align-content: start; padding: 10px 12px; }
+.sbody > .col:first-child { padding-left: var(--side-l); border-right: 1px solid var(--line); }
+.sbody > .col:last-child { padding-right: var(--side-r); }
+.sbody.one { grid-template-columns: minmax(0, 1fr); }
+.sbody.one > .col { padding-left: var(--side-l); padding-right: var(--side-r); border-right: 0; }
+@media (orientation: portrait) {
+  .sbody { grid-template-columns: minmax(0, 1fr); grid-auto-rows: max-content; overflow-y: auto; }
+  .sbody > .col { overflow: visible; padding-left: var(--side-l); padding-right: var(--side-r); }
+  .sbody > .col:first-child { border-right: 0; border-bottom: 1px solid var(--line); }
+  .sbar { flex-wrap: wrap; }
+}
+.nums { font: 12px var(--f-num); color: var(--muted); display: flex; flex-wrap: wrap; gap: 2px 12px; min-width: 0; }
+.nums b { color: var(--fg); font-weight: 400; }
+.nums .pts b { color: var(--accent); }
+.tabs { display: flex; border: 1px solid var(--line); flex: none; }
+.tabs button { border: 0; border-radius: 0; min-height: 32px; padding: 0 14px; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; background: transparent; }
+.tabs button + button { border-left: 1px solid var(--line); }
+.tabs button[aria-pressed="true"] { background: var(--hi); color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
+.msg { font-size: 13px; color: var(--warn); margin: 0; }
+.msg:empty { display: none; }
+h1.big { margin: 0; font-size: 22px; text-transform: uppercase; letter-spacing: .06em; line-height: 1.1; text-wrap: balance; }
+h2.sec { margin: 4px 0 0; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); font-weight: 700;
+  border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+
+/* Список бойцов: строка = кнопка «показать» + переключатель «в бой» */
+.srow { display: flex; align-items: stretch; gap: 0; min-width: 0; }
+.srow .who { flex: 1; min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 2px 8px;
+  text-align: left; padding: 5px 8px; border-right: 0; }
+.srow .who[aria-pressed="true"] { background: var(--hi); border-color: var(--line2); }
+.srow .who .nm { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.srow .who .lv { font: 12px var(--f-num); color: var(--muted); }
+.srow .who .st { grid-column: 2 / 4; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.srow .go { flex: none; width: 64px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); padding: 0 4px; }
+.srow .go[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--ink); font-weight: 700; }
+.warn { color: var(--warn); } .bad { color: var(--bad); } .good { color: var(--good); } .acc { color: var(--accent); }
+.srow.off .who { opacity: .55; }
+
+/* Карточка бойца */
+.dossier { display: grid; gap: 8px; }
+.dossier .line { font-size: 13px; color: var(--muted); }
+.stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border: 1px solid var(--line); }
+.stats div { display: grid; padding: 4px 6px; gap: 1px; }
+.stats div + div { border-left: 1px solid var(--line); }
+.stats b { font: 700 18px var(--f-num); }
+.stats span { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+.slot { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px; align-items: center; font-size: 13px; }
+.slot select { min-height: 32px; font-size: 13px; }
+.kit { font: 12px var(--f-num); color: var(--muted); }
+.perkList { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 5px; }
+.perkList button { text-align: left; display: grid; gap: 2px; font-size: 13px; padding: 5px 8px; }
+.perkList button small { color: var(--muted); font-size: 12px; line-height: 1.25; }
+.raise { display: grid; grid-template-columns: 1fr 1fr auto; gap: 5px; }
+
+/* Таблицы склада, поставок, набора */
+.items { display: grid; }
+.items .it { display: flex; align-items: center; gap: 8px; font-size: 14px; min-height: 36px; border-bottom: 1px solid var(--line); }
+.items .it > span:first-child { flex: 1; min-width: 0; }
+.items .it .num { flex: none; color: var(--muted); font-size: 12px; }
+.items .it button { min-height: 30px; padding: 0 10px; font-size: 13px; flex: none; min-width: 92px; }
+.cand { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 2px 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.cand .nm { font-weight: 700; }
+.cand .sub { grid-column: 2 / 3; font-size: 12.5px; color: var(--muted); }
+.cand button { grid-row: 1 / 3; grid-column: 3; min-width: 120px; }
+
+/* Главный экран */
+#startScreen { grid-template-rows: minmax(0, 1fr); }
+.title { display: grid; align-content: center; gap: 10px; }
+.title h1 { margin: 0; font-size: clamp(34px, 6.4vw, 60px); line-height: .95; text-transform: uppercase; letter-spacing: .04em; }
+.title .note { max-width: 34em; font-size: 14px; }
+.menuList { display: grid; gap: 0; align-content: center; }
+.menuList .entry { display: grid; gap: 6px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.menuList .entry:first-child { border-top: 1px solid var(--line); }
+.menuList .pair button { min-height: 40px; }
+
+/* Итоги */
+.result { font-size: 26px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.result.ok { color: var(--good); } .result.fail { color: var(--bad); }
+.lines { margin: 0; padding: 0; list-style: none; display: grid; font-size: 14px; }
+.lines li { padding: 6px 0; border-bottom: 1px solid var(--line); }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div id="app">
+  <nav id="rail" aria-label="Отряд"><div id="squad" role="group" aria-label="Бойцы"></div></nav>
+
+  <div id="mapWrap">
+    <canvas id="map" aria-label="Карта боя"></canvas>
+    <button id="debugChip" type="button" hidden>Отладка</button>
+    <div id="ticker"><span id="lastLine">—</span><button type="button" id="logBtn" class="ghost">Журнал</button></div>
+    <div id="loading"><div><h2>Загружаю симуляцию боя…</h2><p>Около 5 МБ, при первом открытии — несколько секунд.</p></div></div>
+  </div>
+
+  <aside id="panel" aria-label="Приказы">
+    <div class="bar">
+      <div class="mission"><b id="missionName">Лесополоса</b><span id="turnLine">загрузка…</span></div>
+      <button id="menuBtn" type="button" class="ghost">Меню</button>
+    </div>
+    <div id="context" class="hint"></div>
+    <div class="rows">
+      <div class="seg" id="modeRow" role="group" aria-label="Что делает касание карты">
+        <button type="button" data-mode="move">Идти</button>
+        <button type="button" data-mode="cell">По позиции</button>
+        <button type="button" data-mode="frag">Граната</button>
+        <button type="button" data-mode="smoke">Дым</button>
+        <button type="button" data-mode="killzone" hidden>Мешок</button>
+      </div>
+      <div class="pair">
+        <div class="seg" id="moveRow" role="group" aria-label="Как идти">
+          <button type="button" data-move="run">Бегом</button>
+          <button type="button" data-move="crawl">Ползком</button>
+        </div>
+        <div class="seg" id="fireRow" role="group" aria-label="Режим огня">
+          <button type="button" data-fire="single">Одиночный</button>
+          <button type="button" data-fire="burst">Очередь</button>
+        </div>
+      </div>
+      <div class="seg" id="posRow" role="group" aria-label="Положение у укрытия">
+        <button type="button" data-pos="observe">Наблюдает</button>
+        <button type="button" data-pos="hunker">Укрылся</button>
+        <button type="button" data-pos="overwatch">Упреждение</button>
+      </div>
+      <div class="seg" id="levelRow" role="group" aria-label="Этаж" hidden></div>
+    </div>
+    <button id="endTurn" type="button" class="primary">Конец хода</button>
+  </aside>
+</div>
+
+<!-- Кампания (шаг 9): главный экран → база → бой → итоги → база. Всё, что считает, — Treeline.Campaign через мост. -->
+<div class="screen" id="startScreen" hidden>
+  <div class="sbody">
+    <div class="col title">
+      <span class="cap">Песочница · фаза 4</span>
+      <h1>Лесополоса</h1>
+      <p class="note">Серия боёв: отряд переходит из боя в бой — опыт, раны, травмы, трофеи и потери остаются. Восемь миссий, оборона и штурм по очереди.</p>
+    </div>
+    <div class="col menuList">
+      <div class="entry" id="continueCard" hidden>
+        <span class="cap">Кампания</span>
+        <span id="continueText"></span>
+        <button type="button" class="primary" id="continueBtn">Продолжить</button>
+      </div>
+      <div class="entry">
+        <span class="cap">Новая кампания</span>
+        <span class="note" id="newWarn"></span>
+        <div class="pair" id="factionRow"></div>
+      </div>
+      <div class="entry">
+        <span class="cap">Разовый бой</span>
+        <span class="note">Случайная карта, отряд из генератора, без последствий.</span>
+        <button type="button" id="quickBtn">Разовый бой</button>
+      </div>
+      <p class="msg" id="startMsg"></p>
+    </div>
+  </div>
+</div>
+
+<div class="screen" id="baseScreen" hidden>
+  <div class="sbar">
+    <div class="nums grow" id="baseNums"></div>
+    <div class="tabs" id="baseTabs" role="tablist">
+      <button type="button" data-tab="squad">Отряд</button>
+      <button type="button" data-tab="stock">Склад</button>
+      <button type="button" data-tab="recruit">Набор</button>
+    </div>
+    <button type="button" class="ghost" id="baseHome">Выход</button>
+  </div>
+  <div class="sbody" id="baseBody"></div>
+  <div class="sfoot">
+    <div class="grow">
+      <div id="missionCard"></div>
+      <p class="msg" id="baseMsg" role="status"></p>
+    </div>
+    <span class="num" id="pickNote"></span>
+    <button type="button" class="primary" id="goMission">На задание</button>
+  </div>
+</div>
+
+<div class="screen" id="resultScreen" hidden>
+  <div class="sbar"><span class="cap grow">Итоги боя</span></div>
+  <div class="sbody">
+    <div class="col">
+      <h1 class="big" id="resultMission"></h1>
+      <div class="result" id="resultHead"></div>
+      <p class="note">«Переиграть» — тот же бой с той же картой и противником, как будто этого не было. «На базу» — итоги сохраняются.</p>
+    </div>
+    <div class="col"><ul class="lines" id="resultLines"></ul></div>
+  </div>
+  <div class="sfoot">
+    <button type="button" id="replayBtn">Переиграть бой</button>
+    <span class="grow"></span>
+    <button type="button" class="primary" id="commitBtn">На базу</button>
+  </div>
+</div>
+
+<div class="sheetBack" id="sheetBack" hidden></div>
+
+<div class="sheet" id="menuSheet" hidden role="dialog" aria-label="Меню">
+  <header><h2>Меню</h2><button type="button" class="ghost closeSheet">Закрыть</button></header>
+  <section id="campaignMenu" hidden>
+    <h3>Кампания</h3>
+    <p class="note" id="campaignMenuNote"></p>
+    <div class="pair">
+      <button type="button" class="danger" id="retreatBtn">Отступить</button>
+      <button type="button" id="menuHome">Главный экран</button>
+    </div>
+    <p class="note">Отступление — задача не выполнена, живые возвращаются на базу. Главный экран — бой не засчитан, его можно начать заново.</p>
+  </section>
+  <section id="quickMenu">
+    <h3>Бой</h3>
+    <p class="note" id="nextMission"></p>
+    <select id="squadLevel" aria-label="Уровень отрядов"><option value="0" selected>Уровень по тиру</option><option value="1">Уровень отрядов 1 — без перков</option><option value="4">Уровень отрядов 4 — ярус 2</option><option value="7">Уровень отрядов 7 — все ярусы</option><option value="10">Уровень отрядов 10</option></select>
+    <button type="button" id="newBattle" class="primary">Новый бой</button>
+    <p class="note">Уровень — у обеих сторон, перки по роли бойца. Действует с нового боя.</p>
+    <button type="button" id="quickHome">Главный экран</button>
+  </section>
+  <section>
+    <h3>Противник</h3>
+    <select id="aiVersion" aria-label="Какой ИИ"><option value="v3">ИИ фазы 3 (новый)</option><option value="v2">ИИ фазы 2 (старый)</option></select>
+    <div class="pair">
+      <select id="aiLevel" aria-label="Сложность"></select>
+      <select id="aiCommander" aria-label="Командир противника"><option value="seed">Командир: по сиду</option><option value="always">Командир: всегда</option><option value="never">Командир: нет</option></select>
+    </div>
+    <p class="note">Смена действует с хода противника.</p>
+  </section>
+  <section>
+    <h3>Отладка ИИ — показывает скрытое</h3>
+    <div class="grid3" id="layerRow">
+      <button type="button" data-layer="none">Выкл.</button>
+      <button type="button" data-layer="threat">Угроза</button>
+      <button type="button" data-layer="cover">Укрытие</button>
+      <button type="button" data-layer="control">Контроль</button>
+      <button type="button" data-layer="knowledge">Знание</button>
+      <button type="button" data-layer="plans">Решения</button>
+    </div>
+    <p class="note" id="layerNote"></p>
+    <div id="decisions" hidden></div>
+  </section>
+  <section>
+    <h3>Как играть</h3>
+    <p class="note">Выберите бойца в отряде или на карте. Коснитесь клетки — появится карточка с временем или шансом; подтвердите кнопкой или вторым касанием. Касание врага — выстрел; режимы «По позиции», «Граната», «Дым» меняют, что делает касание карты. Пальцами — сдвиг и масштаб.</p>
+    <dl class="legend">
+      <dt><span class="dot" style="background:var(--player)"></span></dt><dd>ваш боец (Э / К / М — элита, контрактник, мобилизованный)</dd>
+      <dt><span class="dot" style="background:var(--enemy)"></span></dt><dd>противник на виду</dd>
+      <dt><span class="ring"></span></dt><dd>где противника видели последний раз</dd>
+      <dt><span class="trunk"></span></dt><dd>дерево: ствол между двумя клетками — закрывает бойца в соседней клетке с этой стороны, держит пулю</dd>
+      <dt><span class="pit"></span></dt><dd>воронка, канава, траншея — укрытие, если встать в неё</dd>
+      <dt><span class="swatch bush"></span></dt><dd>кусты — прячут от глаз, пулю не держат</dd>
+      <dt><span class="swatch" style="background:#d2b47a"></span></dt><dd>мешки, бруствер, забор, стена; толще линия — высокое укрытие</dd>
+      <dt><span class="shield full"></span></dt><dd>щиток на клетке: закрыт от всех известных врагов; половинка — частично; контур — укрытие есть, врагов ещё не видно</dd>
+      <dt><span class="swatch" style="background:var(--warn)"></span></dt><dd>дуга вокруг бойца — подавление</dd>
+    </dl>
+  </section>
+</div>
+
+<div class="sheet" id="logSheet" hidden role="dialog" aria-label="Журнал боя">
+  <header><h2>Журнал боя</h2><button type="button" class="ghost closeSheet">Закрыть</button></header>
+  <div id="fullLog"></div>
+</div>
+
+<script type="module">
+// Страница только рисует и передаёт касания. Всё, что считает (досягаемость, путь, шанс, исход приказа), —
+// Treeline.Sim через мост WebSandbox (C#, WebAssembly). Своих правил здесь нет.
+const $ = id => document.getElementById(id);
+const COLORS = {
+  field: '#3a4433', trench: '#5b4a35', crater: '#6e5f47', ditch: '#57553d', solid: '#1d221d', floor: '#6b5c4c',
+  grid: 'rgba(255,255,255,0.05)', player: '#ecd77a', enemy: '#cc5a4e', dead: '#93a08f', path: '#f0dc9c',
+  good: '#79b87e', warn: '#e2a83c', bad: '#ee6b5c', info: '#7fc8ff',
+};
+const MATERIAL = { foliage: '#7fb064', wood_fence: '#c4934f', tree_trunk: '#4f7d40', car_body: '#8fa3b3', brick: '#d07a60',
+  logs: '#b08850', sandbags: '#d2b47a', earth: '#a88a62', concrete: '#a7adb3' };
+const FONT = () => getComputedStyle(document.body).fontFamily;
+const esc = t => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+let api, map, view, seed = 1;
+let sel = '', movement = 'run', fireMode = 'single', mode = 'move', level = 0, aim = '';
+const hasPerk = (u, p) => !!u && (u.perks || []).includes(p);
+let focus = null, preview = null;            // выбранная клетка и карточка приказа в неё
+let tracers = [], blasts = [], logLines = [];
+let layer = 'none', debug = null, debugUnit = '';
+const cam = { s: 20, ox: 0, oy: 0 };
+
+// ───────── Запуск .NET ─────────
+async function boot() {
+  try {
+    const { dotnet } = await import('./framework/dotnet.js');
+    const runtime = await dotnet.create();
+    const exports = await runtime.getAssemblyExports(runtime.getConfig().mainAssemblyName);
+    api = exports.Treeline.WebSandbox.Program;
+    const info = JSON.parse(api.AiInfo());
+    $('aiLevel').innerHTML = info.levels.map(l => `<option value="${esc(l.id)}">${esc(l.name)} · шум ×${l.factor}</option>`).join('');
+    $('aiVersion').value = info.version; $('aiLevel').value = info.difficulty; $('aiCommander').value = info.commander;
+    newBattle(seed);
+    $('loading').hidden = true;
+    showStart();
+  } catch (e) {
+    $('loading').innerHTML = `<div><h2>Симуляция не запустилась</h2><p>Пришлите разработчику текст ниже.</p><pre></pre></div>`;
+    $('loading').querySelector('pre').textContent = String(e && e.stack || e);
+  }
+}
+
+function newBattle(s) {
+  seed = s;
+  inCampaign = false; screen(null);
+  enterBattle(JSON.parse(api.StartAt(seed, +$('squadLevel').value)));
+}
+
+function enterBattle(m, note) {
+  map = m;
+  aim = '';
+  level = 0; focus = null; preview = null; tracers = []; blasts = []; logLines = []; mode = 'move';
+  $('fullLog').innerHTML = '';
+  refresh();
+  log(view.deploying ? `[b]${map.name}[/b] — расстановка.` : `[b]${map.name}[/b] — бой начат.`);
+  if (note) log(note);
+  if (view.campaign) log(view.defend ? `Задача: удержаться ${view.turnLimit} ходов.` : `Задача: выбить противника за ${view.turnLimit} ходов.`);
+  sel = view.units.find(u => u.active)?.id ?? '';
+  refresh();
+  fit();
+}
+
+// ───────── Состояние ─────────
+function refresh() {
+  view = JSON.parse(api.View(sel, movement));
+  if (sel && !view.units.find(u => u.id === sel && u.active)) sel = view.units.find(u => u.active)?.id ?? '';
+  if (sel) view = JSON.parse(api.View(sel, movement));
+  debug = layer === 'none' ? null : JSON.parse(api.Debug(layer, level));
+  renderAll();
+}
+
+function renderAll() { renderBar(); renderSquad(); renderContext(); renderControls(); renderDebug(); draw(); }
+
+const unitAt = c => view.units.find(u => u.active && u.x === c.x && u.y === c.y && u.l === c.l);
+const enemyAt = c => view.enemies.find(e => e.x === c.x && e.y === c.y && e.l === c.l);
+const reachAt = c => view.reach.find(r => r[0] === c.x && r[1] === c.y && r[2] === c.l);
+const same = (a, b) => a && b && a.x === b.x && a.y === b.y && a.l === b.l;
+
+const zoneAt = c => (view.zone || []).some(z => z[0] === c.x && z[1] === c.y && z[2] === c.l);
+
+function tap(c) {
+  const own = unitAt(c);
+  if (view.deploying) {
+    // Расстановка: касание своего — выбрать; свободной клетки зоны — поставить туда выбранного.
+    if (own) { select(own.id); return; }
+    if (sel && zoneAt(c)) run(api.Deploy(sel, c.x, c.y, c.l));
+    return;
+  }
+  if (own) { select(own.id); return; }
+  if (!sel || view.over || !view.ours) return;
+  if (same(c, focus) && preview?.ok) { confirm(); return; }
+  focus = c;
+  const enemy = enemyAt(c);
+  const throwKind = mode === 'frag' || mode === 'smoke' ? mode : null;
+  if (mode === 'killzone') preview = { kind: 'killzone', ...JSON.parse(api.PreviewKillZone(sel, c.x, c.y, c.l)) };
+  else if (throwKind) preview = { kind: 'throw', smoke: throwKind === 'smoke', ...JSON.parse(api.PreviewThrow(sel, c.x, c.y, c.l, throwKind)) };
+  else if (enemy && enemy.visible) preview = { kind: 'shot', target: enemy.id, ...JSON.parse(api.PreviewShot(sel, enemy.id, fireMode, shotAim())) };
+  else if (enemy) preview = { kind: 'last', seenTurn: enemy.seenTurn, ...JSON.parse(api.PreviewFireAtCell(sel, c.x, c.y, c.l, fireMode)) };
+  else if (mode === 'cell') preview = { kind: 'cell', ...JSON.parse(api.PreviewFireAtCell(sel, c.x, c.y, c.l, fireMode)) };
+  else if (reachAt(c)) preview = { kind: 'move', ...JSON.parse(api.PreviewMove(sel, c.x, c.y, c.l, movement)) };
+  else preview = { kind: 'none', ok: false, error: 'Сюда не дойти за оставшееся время.' };
+  renderContext(); draw();
+}
+
+// Действие перка для выстрела: голова и «Двойка» — только одиночным и только с перком.
+function shotAim() {
+  const u = view.units.find(x => x.id === sel);
+  if (fireMode !== 'single') return '';
+  if (aim === 'head' && hasPerk(u, 'called_shot')) return 'head';
+  if (aim === 'double' && hasPerk(u, 'double_tap')) return 'double';
+  return '';
+}
+function reshot() {
+  if (preview?.kind === 'shot') preview = { kind: 'shot', target: preview.target, ...JSON.parse(api.PreviewShot(sel, preview.target, fireMode, shotAim())) };
+}
+
+function select(id) { sel = id; focus = null; preview = null; if (mode === 'killzone') mode = 'move'; refresh(); }
+
+function cancel() { focus = null; preview = null; renderContext(); draw(); }
+
+function confirm() {
+  if (!preview?.ok || !focus) return;
+  const c = focus;
+  if (preview.kind === 'move') run(api.Move(sel, c.x, c.y, c.l, movement));
+  else if (preview.kind === 'shot') run(api.Fire(sel, preview.target, fireMode, shotAim()));
+  else if (preview.kind === 'killzone') { mode = 'move'; run(api.KillZone(sel, c.x, c.y, c.l)); }
+  else if (preview.kind === 'throw') { const k = preview.smoke ? 'smoke' : 'frag'; mode = 'move'; run(api.Throw(sel, c.x, c.y, c.l, k)); }
+  else run(api.FireAtCell(sel, c.x, c.y, c.l, fireMode));
+}
+
+function run(resultJson) {
+  const r = JSON.parse(resultJson);
+  if (!r.ok) log(`[color=#e2a83c]${r.error}[/color]`);
+  takeEvents();
+  focus = null; preview = null;
+  refresh();
+  if (view.over) log(view.campaign ? `[b]Бой окончен: ${view.won ? 'задача выполнена' : 'задача не выполнена'}.[/b] Кнопка «Итоги» — вверху.`
+    : view.won ? '[b]Победа.[/b] Новый бой — в меню.' : '[b]Поражение.[/b] Новый бой — в меню.');
+}
+
+function takeEvents() {
+  const ev = JSON.parse(api.TakeEvents());
+  ev.lines.forEach(log);
+  const now = performance.now();
+  for (const t of ev.tracers) tracers.push({ x1: t[0], y1: t[1], x2: t[2], y2: t[3], ours: t[4], born: now });
+  for (const b of ev.blasts) blasts.push({ x: b[0], y: b[1], l: b[2], born: now });
+  if (ev.coverChanged) map.edges = JSON.parse(api.Edges());
+  if (ev.tracers.length || ev.blasts.length) animate();
+}
+
+// ───────── Журнал (BBCode из общего с Godot EventText → HTML) ─────────
+function bbToHtml(bb) {
+  return esc(bb).replace(/\[b\]/g, '<b>').replace(/\[\/b\]/g, '</b>')
+    .replace(/\[color=(#[0-9a-fA-F]{6})\]/g, '<span style="color:$1">').replace(/\[\/color\]/g, '</span>');
+}
+function log(bb) {
+  logLines.push(bb);
+  const p = document.createElement('p');
+  p.innerHTML = bbToHtml(bb);
+  $('fullLog').appendChild(p);
+  $('lastLine').innerHTML = bbToHtml(bb);
+}
+
+// ───────── Полоса хода ─────────
+function renderBar() {
+  $('missionName').textContent = map.name.replace(/\s*\(карта \d+\)$/, '');
+  const who = view.over ? (view.won ? 'победа' : 'поражение') : view.ours ? 'ваш ход' : 'ход противника';
+  const limit = view.turnLimit ? ` из ${view.turnLimit}` : '';
+  $('turnLine').innerHTML = `Ход ${Math.min(view.turn, view.turnLimit || view.turn)}${limit} · <span class="who-turn${view.ours ? '' : ' enemy'}">${who}</span>`;
+  const results = view.over && view.campaign;   // бой кампании кончился — к итогам
+  $('endTurn').disabled = !results && (view.over || !view.ours);
+  $('endTurn').textContent = results ? 'Итоги' : view.deploying ? 'Начать бой' : 'Конец хода';
+  if (view.deploying) $('turnLine').innerHTML = 'Расстановка';
+  $('debugChip').hidden = layer === 'none';
+  $('debugChip').innerHTML = `Отладка<span class="layerName">: ${LAYER_NAME[layer] ?? ''}</span> ✕`;
+}
+
+// ───────── Отряд ─────────
+function renderSquad() {
+  $('squad').innerHTML = view.units.map(u => {
+    const st = !u.active ? (u.dead ? 'погиб' : 'выбыл') : u.moraleState === 'сломлен' ? 'сломлен'
+      : u.suppLevel === 2 ? 'подавлен' : u.suppLevel === 1 ? 'прижат' : u.moraleState === 'дрогнул' ? 'дрогнул' : '';
+    const cls = !u.active || u.suppLevel === 2 || st === 'сломлен' ? 'st-bad' : st ? 'st-warn' : '';
+    return `<button type="button" class="soldier${u.active ? '' : ' out'}" data-id="${esc(u.id)}" aria-pressed="${u.id === sel}" ${u.active ? '' : 'disabled'}>
+      <span class="top"><span class="tier">${esc(u.tierLetter)}</span><span class="name">${esc(u.name.split(' ').pop())}</span></span>
+      <span class="hp"><i style="width:${Math.max(0, 100 * u.health / u.maxHealth)}%"></i></span>
+      <span class="meta"><span>${u.active ? u.time.toFixed(1) + ' с' : ''}</span><span class="${cls}">${esc(st)}</span></span>
+    </button>`;
+  }).join('');
+  $('squad').querySelectorAll('.soldier').forEach(b => b.onclick = () => select(b.dataset.id));
+}
+
+// ───────── Карточка цели / подсказка ─────────
+function enemyLine(s) {
+  const bits = [s.weapon, s.armor, `здоровье ${s.health}/${s.maxHealth}`];
+  if (s.suppState !== 'нет') bits.push(s.suppState);
+  if (s.moraleState !== 'держится') bits.push(s.moraleState);
+  return `<div class="sub"><span class="enemyName">${esc(s.name)}</span> · ${esc(s.tier)} · ${bits.map(esc).join(' · ')}</div>`;
+}
+
+const sc = p => p.stanceChange ? ` · ${esc(p.stanceChange)}` : '';
+
+function renderContext() {
+  const box = $('context');
+  const u = view.units.find(x => x.id === sel);
+  if (!preview) {
+    box.className = 'hint';
+    let text;
+    if (view.over) text = view.campaign ? `Бой окончен: ${view.won ? 'задача выполнена' : 'задача не выполнена'}. Нажмите «Итоги».`
+      : view.won ? 'Победа. Новый бой — в меню.' : 'Поражение. Новый бой — в меню.';
+    else if (!view.ours) text = 'Ходит противник…';
+    else if (view.deploying) text = u ? `${u.name}: коснитесь свободной клетки в подсвеченной зоне, чтобы поставить его туда. Готовы — «Начать бой».` : 'Выберите бойца.';
+    else if (!u) text = 'Выберите бойца.';
+    else text = {
+      move: `${u.name}: коснитесь клетки, чтобы идти, или врага, чтобы стрелять. Осталось ${u.time.toFixed(1)} с.`,
+      cell: `${u.name}: коснитесь клетки — огонь по позиции, пули прижмут тех, кто рядом.`,
+      frag: `${u.name}: коснитесь клетки, куда бросить гранату (осталось ${u.grenades}).`,
+      smoke: `${u.name}: коснитесь клетки, куда бросить дым (осталось ${u.smokes}).`,
+      killzone: `${u.name}: коснитесь клетки — «Огневой мешок» в её сторону. По каждому врагу, шагнувшему в сектор, — очередь, пока есть время.`,
+    }[mode];
+    if (u?.killZone && mode === 'move') text += ' Держит огневой мешок.';
+    const can = u && view.ours && !view.over && !view.deploying;
+    const reload = can && u.mag < u.magSize && u.spare > 0;
+    const gear = u ? `<br><small class="profile">${esc(u.weapon)}${u.trophy ? ` (трофей: время ×1.15, меткость −5)` : ''} · патроны ${u.mag} + ${u.spare} · аптечек ${u.medkits} · ${esc(u.load)} · шлем: ${esc(u.helmet)} · жилет: ${esc(u.vest)}${u.bleeding ? ' · <b style="color:var(--bad)">кровотечение</b>' : ''}</small>` : '';
+    const profile = u && u.profile && view.ours && !view.over ? `<br><small class="profile">${esc(u.profile)}</small>` : '';
+    if (u && view.ours && !view.over && !view.deploying && u.overwatchBlock && mode === 'move') text += ` ${u.overwatchBlock}`;
+    const bandage = can ? (u.bandage || []).map(t => `<button type="button" class="bandage" data-target="${esc(t.id)}">Перевязать ${esc(t.name)}</button>`).join('')
+      + (u.stabilize || []).map(t => `<button type="button" class="care" data-kind="stabilize" data-target="${esc(t.id)}">Стабилизировать ${esc(t.name)}<small> ${t.seconds} с</small></button>`).join('')
+      + (u.search || []).map(t => (t.rounds > 0 ? `<button type="button" class="search" data-weapon="0" data-target="${esc(t.id)}">Патроны с ${esc(t.name)}<small> +${t.rounds}, 5 с</small></button>` : '')
+        + (t.weapon ? `<button type="button" class="search" data-weapon="1" data-target="${esc(t.id)}">Взять: ${esc(t.weapon)}<small> ${t.weaponRounds} патр.${t.trophy ? ', трофей — штраф 3 боя' : ''}, 5 с</small></button>` : '')).join('')
+      + (u.revive || []).map(t => `<button type="button" class="care" data-kind="revive" data-target="${esc(t.id)}">Поднять ${esc(t.name)}<small> ${t.seconds} с${t.turns > 1 ? `, ${t.turns} хода` : ''}</small></button>`).join('') : '';
+    box.innerHTML = `<span>${esc(text)}${gear}${profile}</span>${reload ? `<button type="button" id="reload">Перезарядить</button>` : ''}${bandage}`;
+    $('reload')?.addEventListener('click', () => sel && run(api.Reload(sel)));
+    box.querySelectorAll('.bandage').forEach(b => b.onclick = () => sel && run(api.Bandage(sel, b.dataset.target)));
+    box.querySelectorAll('.search').forEach(b => b.onclick = () => sel && run(api.Search(sel, b.dataset.target, b.dataset.weapon === '1')));
+    box.querySelectorAll('.care').forEach(b => b.onclick = () => sel && run(api.Care(sel, b.dataset.target, b.dataset.kind)));
+    return;
+  }
+  box.className = '';
+  const enemy = (preview.kind === 'shot' || preview.kind === 'last') ? view.enemies.find(e => same(e, focus)) : null;
+  let head = '', body = '', go = '';
+  if (preview.kind === 'move' && preview.ok) {
+    const cv = preview.cover;
+    const cls = cv.level === 2 ? 'cov-full' : cv.level === 1 ? 'cov-part' : cv.level === 3 ? 'cov-pot' : 'cov-none';
+    head = `<div class="big">${preview.seconds.toFixed(1)} с</div><div class="sub">${movement === 'run' ? 'бегом' : 'ползком'}, ${preview.path.length} кл.</div>`
+      + `<div class="sub ${cls}">Укрытие: ${esc(cv.summary)}</div>`;
+    if (cv.lines.length) body = `<details><summary>От кого закрыт</summary><ul>${cv.lines.map(l => `<li><span>${esc(l)}</span></li>`).join('')}</ul></details>`;
+    go = 'Идти';
+  } else if (preview.kind === 'shot') {
+    const shots = preview.shots > 1 ? `${preview.shots} выстрела` : `${preview.rounds}×`;
+    head = `<div class="big">${(preview.chance * 100).toFixed(1)}%</div><div class="sub">за пулю · ${shots} · ${preview.seconds.toFixed(1)} с${sc(preview)} · ${preview.distance.toFixed(0)} м · укрытие: ${esc(preview.cover)}</div>`;
+    if (enemy?.status) head += enemyLine(enemy.status);
+    const me = view.units.find(x => x.id === sel);
+    const opts = [['', 'Обычно']];
+    if (hasPerk(me, 'called_shot')) opts.push(['head', 'Голова']);
+    if (hasPerk(me, 'double_tap')) opts.push(['double', 'Двойка']);
+    if (opts.length > 1) {
+      const cur = shotAim();
+      head += `<div class="seg aimRow" role="group" aria-label="Прицел">${opts.map(([k, n]) =>
+        `<button type="button" data-aim="${k}" aria-pressed="${k === cur}" ${fireMode !== 'single' && k ? 'disabled' : ''}>${n}</button>`).join('')}</div>`
+        + `<div class="sub">${cur === 'head' ? 'прицел в голову +1 с · ' : cur === 'double' ? 'два одиночных за время прицельного +1 с · ' : ''}в голову ${Math.round(preview.head * 100)}% попаданий · сила попадания ${Math.round(preview.effect * 100)}%${fireMode !== 'single' ? ' · прицел и «Двойка» — только одиночным' : ''}</div>`;
+    }
+    body = `<details><summary>Из чего складывается шанс</summary><ul>${preview.terms.map(t => `<li><span>${esc(t.label)}</span><span>${esc(t.value)}</span></li>`).join('')}</ul></details>`;
+    go = 'Огонь';
+  } else if (preview.kind === 'last') {
+    head = `<div class="sub">Противник был здесь на ходу ${preview.seenTurn}, сейчас не виден. Огонь по позиции: ${preview.rounds}× · ${preview.distance.toFixed(0)} м${preview.ok ? ` · ${preview.seconds.toFixed(1)} с${sc(preview)}` : ''}.</div>`;
+    go = 'По позиции';
+  } else if (preview.kind === 'throw') {
+    head = `<div class="big">${preview.seconds.toFixed(1)} с</div><div class="sub">бросок на ${preview.distance.toFixed(0)} м (${esc(preview.stance)}${sc(preview)}), можно до ${preview.range.toFixed(0)} м, разброс ±${preview.scatter.toFixed(1)} м</div>`;
+    go = preview.smoke ? 'Бросить дым' : 'Бросить';
+  } else if (preview.kind === 'killzone') {
+    head = preview.ok
+      ? `<div class="big">${preview.cone}°</div><div class="sub">огневой мешок: очередь ${preview.burst.toFixed(1)} с, хватит на ${preview.bursts}. Держится, пока боец ничего не делает: любое действие или смена положения снимает.</div>`
+      : `<div class="sub">Огневой мешок</div>`;
+    go = 'Поставить';
+  } else if (preview.kind === 'cell') {
+    head = `<div class="sub">Огонь по позиции: ${preview.rounds}× · ${preview.distance.toFixed(0)} м${preview.ok ? ` · ${preview.seconds.toFixed(1)} с${sc(preview)}` : ''}. Пули ложатся вокруг клетки и прижимают тех, кто рядом.</div>`;
+    go = 'По позиции';
+  }
+  if (!preview.ok && preview.error) body += `<div class="err">${esc(preview.error)}</div>`;
+  const actions = `<div class="actions">${preview.ok && go ? `<button type="button" class="${preview.kind === 'move' ? 'primary' : 'danger'}" id="go">${go}</button>` : ''}<button type="button" class="ghost" id="cancel">Отмена</button></div>`;
+  box.innerHTML = `<div class="head"><div>${head}</div>${actions}</div>${body}`;
+  $('go')?.addEventListener('click', confirm);
+  $('cancel').addEventListener('click', cancel);
+  box.querySelectorAll('.aimRow button').forEach(b => b.onclick = () => { aim = b.dataset.aim; reshot(); renderContext(); draw(); });
+}
+
+// ───────── Переключатели ─────────
+function renderControls() {
+  const u = view.units.find(x => x.id === sel);
+  const can = !!u && view.ours && !view.over && !view.deploying;
+  document.querySelectorAll('#modeRow button').forEach(b => {
+    b.setAttribute('aria-pressed', b.dataset.mode === mode);
+    b.disabled = !can;
+    if (b.dataset.mode === 'frag') b.innerHTML = `Граната<small>${u?.grenades ?? 0}</small>`;
+    if (b.dataset.mode === 'smoke') b.innerHTML = `Дым<small>${u?.smokes ?? 0}</small>`;
+    if (b.dataset.mode === 'killzone') b.hidden = !hasPerk(u, 'kill_zone');
+  });
+  document.querySelectorAll('#moveRow button').forEach(b => { b.setAttribute('aria-pressed', b.dataset.move === movement); b.disabled = !can || mode !== 'move'; });
+  document.querySelectorAll('#fireRow button').forEach(b => { b.setAttribute('aria-pressed', b.dataset.fire === fireMode); b.disabled = !can; });
+  document.querySelectorAll('#posRow button').forEach(b => {
+    b.setAttribute('aria-pressed', !!u && b.dataset.pos === u.positionId);
+    // Упреждение: стрелял в этот ход или осталось меньше 5 с — кнопка гаснет, причина — в подсказке.
+    const blocked = b.dataset.pos === 'overwatch' && !!u?.overwatchBlock;
+    b.disabled = !can || blocked;
+    b.title = blocked ? u.overwatchBlock : '';
+  });
+  const multi = map.levels.length > 1;
+  $('levelRow').hidden = !multi;
+  if (multi) {
+    $('levelRow').innerHTML = map.levels.map((_, i) => `<button type="button" data-level="${i}" aria-pressed="${i === level}">${i === 0 ? 'Земля' : `${i + 1}-й этаж`}</button>`).join('');
+    $('levelRow').querySelectorAll('button').forEach(b => b.onclick = () => { level = +b.dataset.level; focus = null; preview = null; refresh(); });
+  }
+}
+
+// ───────── Отладка ИИ ─────────
+const LAYER_NAME = { threat: 'угроза', cover: 'укрытие', control: 'контроль', knowledge: 'знание', plans: 'решения' };
+const LAYER_NOTE = {
+  none: 'Слои показывают, что думает ИИ противника, — включая то, чего вам знать не положено.',
+  threat: 'Угроза для бойцов ИИ: шанс получить попадание за очередь от ваших бойцов, о которых ИИ знает. Ярче — опаснее.',
+  cover: 'Насколько клетка защищает бойца ИИ от ваших бойцов. Зелёный — защищает.',
+  control: 'Кто быстрее добежит: жёлтый — зона ИИ, красный — ваша.',
+  knowledge: 'Где ИИ думает, что ваши бойцы. Сплошной круг — видит; пунктир — помнит, большой круг — куда мог уйти; число — давность, с.',
+  plans: 'Решения прошлого хода ИИ: стрелки — кто куда пошёл, цифры — 5 лучших клеток выбранного бойца. К — командир, О / М — огневая и манёвренная группы, двойной круг — его цель.',
+};
+function renderDebug() {
+  document.querySelectorAll('#layerRow button').forEach(b => b.setAttribute('aria-pressed', b.dataset.layer === layer));
+  $('layerNote').textContent = LAYER_NOTE[layer];
+  const box = $('decisions');
+  box.hidden = layer !== 'plans' || !debug;
+  if (box.hidden) return;
+  if (debug.ai !== 'v3') { box.innerHTML = '<p class="note">У ИИ фазы 2 нет оценок — решений не видно.</p>'; return; }
+  if (!debug.decisions.length) { box.innerHTML = '<p class="note">ИИ ещё не ходил.</p>'; return; }
+  if (!debugUnit || !debug.decisions.find(d => d.id === debugUnit)) debugUnit = debug.decisions[0].id;
+  const nameOf = id => debug.units.find(u => u.id === id)?.name ?? id;
+  const c = debug.command;
+  const head = !c ? '<p class="note">Командира нет — каждый боец решает сам.</p>'
+    : `<p class="note"><b>Командир: ${esc(c.name)}</b>${c.alive ? '' : ' — выбыл, отряд без координации'}${c.stage ? ` · ${esc(c.stage)}` : ''}${c.target ? ` · цель: ${esc(c.target)}` : ''}`
+      + (c.fire.length ? `<br>огневая: ${c.fire.map(x => esc(nameOf(x))).join(', ')} · манёвренная: ${c.maneuver.map(x => esc(nameOf(x))).join(', ') || '—'}` : '') + '</p>';
+  box.innerHTML = head + debug.decisions.map(d => {
+    const terms = p => p.terms.map(t => `${esc(t.n)} ${t.v > 0 ? '+' : ''}${t.v}`).join(' · ');
+    const list = d.id === debugUnit
+      ? `<ol>${d.top.map(p => `<li class="${p.x === d.chosen.x && p.y === d.chosen.y && p.what === d.chosen.what ? 'chosen' : ''}">(${p.x},${p.y}) ${esc(p.what)} — ${p.score}<div class="t">${terms(p)}</div></li>`).join('')}</ol>` : '';
+    return `<div class="d" data-id="${esc(d.id)}" aria-selected="${d.id === debugUnit}" role="button" tabindex="0"><b>${esc(nameOf(d.id))}</b> · ход ${d.turn}: (${d.from[0]},${d.from[1]}) → (${d.chosen.x},${d.chosen.y}), ${esc(d.chosen.what)}, оценка ${d.chosen.score} — ${d.rank}-й из ${d.count}<div class="t">задача: ${esc(d.task)}</div>${list}</div>`;
+  }).join('');
+  box.querySelectorAll('.d').forEach(el => el.onclick = () => { debugUnit = el.dataset.id; renderDebug(); draw(); });
+}
+
+// ───────── Отрисовка ─────────
+const canvas = $('map'), ctx = canvas.getContext('2d');
+function resize() {
+  const r = canvas.getBoundingClientRect(), d = devicePixelRatio || 1;
+  canvas.width = Math.round(r.width * d); canvas.height = Math.round(r.height * d);
+  ctx.setTransform(d, 0, 0, d, 0, 0);
+  if (map) fit(); else draw();
+}
+function fit() {
+  const r = canvas.getBoundingClientRect();
+  // Снизу карту прикрывает строка журнала — вписываем карту в высоту над ней.
+  const h = r.height - ($('ticker').offsetHeight + 12);
+  cam.s = Math.max(5, Math.min(r.width / map.w, h / map.h));
+  cam.ox = (r.width - map.w * cam.s) / 2; cam.oy = Math.max(0, (h - map.h * cam.s) / 2);
+  draw();
+}
+const sx = cx => cam.ox + cx * cam.s, sy = cy => cam.oy + cy * cam.s;
+const mx = m => sx(m / map.cellM), my = m => sy(m / map.cellM);
+
+function ground(l, i) {
+  const k = map.levels[l].kinds[i], d = map.levels[l].depth[i];
+  if (k === 'S') return COLORS.solid;
+  if (k === 'F' || k === 'R') return COLORS.floor;
+  if (d >= 1.4) return COLORS.trench;
+  if (d >= 0.9) return COLORS.ditch;
+  if (d > 0) return COLORS.crater;
+  return COLORS.field;
+}
+
+// Щиток укрытия: 2 — закрыт от всех известных врагов, 1 — частично, 3 — укрытие есть (врагов не видно).
+function shield(cx, cy, r, cov) {
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - r); ctx.lineTo(cx + r, cy - r * 0.6); ctx.lineTo(cx + r, cy + r * 0.1); ctx.lineTo(cx, cy + r);
+  ctx.lineTo(cx - r, cy + r * 0.1); ctx.lineTo(cx - r, cy - r * 0.6); ctx.closePath();
+  ctx.lineWidth = 1.2; ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+  if (cov === 2) { ctx.fillStyle = COLORS.good; ctx.fill(); ctx.stroke(); }
+  else if (cov === 1) {
+    ctx.save(); ctx.clip(); ctx.fillStyle = COLORS.warn; ctx.fillRect(cx - r, cy - r, r, 2 * r); ctx.restore();
+    ctx.strokeStyle = COLORS.warn; ctx.stroke();
+  } else { ctx.fillStyle = 'rgba(229,234,220,0.28)'; ctx.fill(); ctx.strokeStyle = 'rgba(229,234,220,0.9)'; ctx.lineWidth = 1.5; ctx.stroke(); }
+}
+
+function draw() {
+  if (!map || !view) return;
+  const r = canvas.getBoundingClientRect(), s = cam.s;
+  ctx.fillStyle = '#0a0d0a'; ctx.fillRect(0, 0, r.width, r.height);
+  for (let y = 0; y < map.h; y++) for (let x = 0; x < map.w; x++) {
+    const i = y * map.w + x;
+    ctx.fillStyle = ground(0, i); ctx.fillRect(sx(x), sy(y), s + 0.5, s + 0.5);
+    if (level > 0) {
+      const k = map.levels[level].kinds[i];
+      ctx.fillStyle = (k === 'F' || k === 'R' || k === 'O') ? COLORS.floor : 'rgba(0,0,0,0.5)';
+      ctx.fillRect(sx(x), sy(y), s + 0.5, s + 0.5);
+    }
+    if (level === 0 && map.levels[0].depth[i] > 0 && s > 6) {
+      // Углубление: тёмная кромка по границе с ровной землёй — «ямка», в которую надо встать.
+      const dep = (xx, yy) => xx < 0 || yy < 0 || xx >= map.w || yy >= map.h ? 1 : map.levels[0].depth[yy * map.w + xx];
+      const w = Math.max(1.5, s * 0.12);
+      ctx.fillStyle = 'rgba(0,0,0,0.4)';
+      if (!dep(x, y - 1)) ctx.fillRect(sx(x), sy(y), s, w);
+      if (!dep(x, y + 1)) ctx.fillRect(sx(x), sy(y + 1) - w, s, w);
+      if (!dep(x - 1, y)) ctx.fillRect(sx(x), sy(y), w, s);
+      if (!dep(x + 1, y)) ctx.fillRect(sx(x + 1) - w, sy(y), w, s);
+    }
+    if (map.levels[0].kinds[i] === 'R' && level === 0 && s > 10) {
+      ctx.strokeStyle = COLORS.grid; ctx.lineWidth = 1;
+      for (let k = 1; k < 4; k++) { ctx.beginPath(); ctx.moveTo(sx(x), sy(y + k / 4)); ctx.lineTo(sx(x + 1), sy(y + k / 4)); ctx.stroke(); }
+    }
+  }
+  if (s > 9) {
+    ctx.strokeStyle = COLORS.grid; ctx.lineWidth = 1; ctx.beginPath();
+    for (let x = 0; x <= map.w; x++) { ctx.moveTo(sx(x), sy(0)); ctx.lineTo(sx(x), sy(map.h)); }
+    for (let y = 0; y <= map.h; y++) { ctx.moveTo(sx(0), sy(y)); ctx.lineTo(sx(map.w), sy(y)); }
+    ctx.stroke();
+  }
+  // Отладка: тепловая карта слоя.
+  if (debug && (layer === 'threat' || layer === 'cover' || layer === 'control')) {
+    for (let y = 0; y < map.h; y++) for (let x = 0; x < map.w; x++) {
+      const v = debug.values[y * map.w + x];
+      if (v === null || v === undefined) continue;
+      if (layer === 'threat') ctx.fillStyle = `rgba(236,90,70,${Math.min(0.75, v * 0.85)})`;
+      else if (layer === 'cover') ctx.fillStyle = `rgba(121,184,126,${v * 0.6})`;
+      else ctx.fillStyle = v >= 0 ? `rgba(230,178,52,${v * 0.55})` : `rgba(224,74,63,${-v * 0.55})`;
+      ctx.fillRect(sx(x), sy(y), s, s);
+    }
+  }
+  for (const [x, y, l] of view.smoke || []) if (l === level) { ctx.fillStyle = 'rgba(205,210,200,0.55)'; ctx.fillRect(sx(x), sy(y), s, s); }
+  // Зона расстановки.
+  for (const [x, y, l] of view.zone || []) if (l === level) {
+    ctx.fillStyle = 'rgba(236,215,122,0.16)'; ctx.fillRect(sx(x), sy(y), s, s);
+  }
+  // Куда можно дойти: ярче — до 5 с. Только в режиме «Идти».
+  if (mode === 'move') for (const [x, y, l, sec, cov] of view.reach) if (l === level) {
+    ctx.fillStyle = sec <= 5 ? 'rgba(240,220,156,0.20)' : 'rgba(240,220,156,0.09)';
+    ctx.fillRect(sx(x), sy(y), s, s);
+    if (cov && s >= 10) shield(sx(x) + s * 0.7, sy(y) + s * 0.3, Math.max(4, s * 0.26), cov);
+  }
+  const me = view.units.find(u => u.id === sel);
+  if (preview?.kind === 'move' && preview.ok && me) {
+    ctx.strokeStyle = COLORS.path; ctx.lineWidth = 2; ctx.setLineDash([5, 4]); ctx.beginPath(); ctx.moveTo(mx(me.px), my(me.py));
+    for (const [x, y] of preview.path) ctx.lineTo(sx(x + 0.5), sy(y + 0.5));
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+  // «Огневой мешок»: клетки сектора.
+  if (preview?.kind === 'killzone') for (const [x, y, l] of preview.cells || []) if (l === level) {
+    ctx.fillStyle = 'rgba(236,90,70,0.16)'; ctx.fillRect(sx(x), sy(y), s, s);
+  }
+  if (focus) { ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 2; ctx.strokeRect(sx(focus.x) + 1, sy(focus.y) + 1, s - 2, s - 2); }
+  // Укрытия на рёбрах.
+  const trees = [];
+  for (const e of map.edges) if (e.l === level) {
+    const [x1, y1, x2, y2] = e.d === 'E' ? [e.x + 1, e.y, e.x + 1, e.y + 1] : [e.x, e.y + 1, e.x + 1, e.y + 1];
+    if (e.m === 'tree_trunk') { trees.push([(x1 + x2) / 2, (y1 + y2) / 2]); continue; }
+    if (e.m === 'foliage') {
+      // Кусты: мягкая «пушистая» линия — прячут, но пулю не держат.
+      ctx.strokeStyle = e.high ? 'rgba(127,176,100,0.85)' : 'rgba(127,176,100,0.6)';
+      ctx.lineWidth = Math.max(2, s * (e.high ? 0.2 : 0.13)); ctx.lineCap = 'round';
+      ctx.setLineDash([Math.max(2, s * 0.12), Math.max(2, s * 0.08)]);
+      ctx.beginPath(); ctx.moveTo(sx(x1), sy(y1)); ctx.lineTo(sx(x2), sy(y2)); ctx.stroke();
+      ctx.lineCap = 'butt'; ctx.setLineDash([]);
+      continue;
+    }
+    ctx.strokeStyle = MATERIAL[e.m] || '#fff';
+    ctx.lineWidth = Math.max(1.5, s * (e.high ? 0.16 : 0.09));
+    ctx.setLineDash(e.win ? [s * 0.15, s * 0.12] : []);
+    ctx.beginPath(); ctx.moveTo(sx(x1), sy(y1)); ctx.lineTo(sx(x2), sy(y2)); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  // Стволы: крона и круглый ствол на середине ребра — закрывает обе соседние клетки со своей стороны.
+  for (const [tx, ty] of trees) {
+    ctx.fillStyle = 'rgba(46,82,40,0.55)'; ctx.beginPath(); ctx.arc(sx(tx), sy(ty), s * 0.48, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#5b4632'; ctx.strokeStyle = '#2b2118'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(sx(tx), sy(ty), Math.max(3, s * 0.16), 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  }
+  // Бойцы: подложка своей клетки, кружок, буква тира.
+  const rad = Math.max(4, s * 0.34);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (const u of view.units) if (u.l === level) {
+    const x = mx(u.px), y = my(u.py);
+    if (!u.active) { ctx.fillStyle = COLORS.dead; ctx.font = `${Math.max(10, rad * 1.4)}px sans-serif`; ctx.fillText(u.dead ? '✝' : '+', x, y); continue; }
+    if (u.id === sel) {
+      ctx.fillStyle = 'rgba(240,220,156,0.18)'; ctx.fillRect(sx(u.x), sy(u.y), s, s);
+      ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, rad + 3, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.fillStyle = COLORS.player; ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.fill();
+    if (rad >= 7) { ctx.fillStyle = '#1d221d'; ctx.font = `600 ${Math.round(rad * 1.1)}px ${FONT()}`; ctx.fillText(u.tierLetter, x, y + 1); }
+    status(x, y, rad, u);
+  }
+  for (const e of view.enemies) if (e.l === level) {
+    const x = mx(e.px), y = my(e.py);
+    if (e.visible) {
+      ctx.fillStyle = COLORS.enemy; ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.fill();
+      status(x, y, rad, e.status);
+      if (preview?.kind === 'shot' && preview.target === e.id) {
+        ctx.fillStyle = '#fff'; ctx.font = `600 13px ${FONT()}`; ctx.textAlign = 'left';
+        ctx.fillText(`${(preview.chance * 100).toFixed(1)}%`, x + rad + 4, y - rad); ctx.textAlign = 'center';
+      }
+    } else {
+      ctx.strokeStyle = COLORS.enemy; ctx.lineWidth = 2; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = COLORS.enemy; ctx.font = `600 ${Math.max(9, Math.round(rad * 1.1))}px sans-serif`; ctx.fillText('?', x, y + 1);
+    }
+  }
+  drawDebugMarks(rad, s);
+  const now = performance.now();
+  blasts = blasts.filter(b => now - b.born < 1200);
+  for (const b of blasts) if (b.l === level) {
+    const a = 1 - (now - b.born) / 1200, x = mx(b.x), y = my(b.y);
+    ctx.fillStyle = `rgba(255,170,60,${0.55 * a})`; ctx.beginPath(); ctx.arc(x, y, cam.s * 1.5 / map.cellM, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = `rgba(255,120,60,${a})`; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x, y, cam.s * (1 + (1 - a) * 4) * 1.5 / map.cellM * 2, 0, Math.PI * 2); ctx.stroke();
+  }
+  tracers = tracers.filter(t => now - t.born < 700);
+  for (const t of tracers) {
+    const a = 1 - (now - t.born) / 700;
+    ctx.strokeStyle = t.ours ? `rgba(255,217,102,${a})` : `rgba(255,102,77,${a})`; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(mx(t.x1), my(t.y1)); ctx.lineTo(mx(t.x2), my(t.y2)); ctx.stroke();
+  }
+}
+
+function drawDebugMarks(rad, s) {
+  if (!debug) return;
+  if (layer === 'knowledge') {
+    ctx.font = `600 11px ${FONT()}`; ctx.textAlign = 'left';
+    for (const k of debug.knowledge) if (k.l === level) {
+      const x = mx(k.px), y = my(k.py);
+      ctx.strokeStyle = COLORS.info; ctx.lineWidth = 2; ctx.setLineDash(k.visible ? [] : [4, 3]);
+      ctx.beginPath(); ctx.arc(x, y, rad + 6, 0, Math.PI * 2); ctx.stroke();
+      if (k.radius > 0) { ctx.setLineDash([2, 4]); ctx.beginPath(); ctx.arc(x, y, k.radius / map.cellM * s, 0, Math.PI * 2); ctx.stroke(); }
+      ctx.setLineDash([]); ctx.fillStyle = COLORS.info;
+      if (!k.visible) ctx.fillText(`${k.age.toFixed(0)} с`, x + rad + 8, y - rad);
+    }
+    ctx.textAlign = 'center';
+  }
+  if (layer === 'plans' || layer === 'knowledge') {
+    for (const u of debug.units) if (u.l === level && u.active && !view.enemies.find(e => e.id === u.id && e.visible)) {
+      ctx.strokeStyle = 'rgba(230,178,52,0.8)'; ctx.lineWidth = 1.5; ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.arc(mx(u.px), my(u.py), rad, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+    }
+  }
+  if (layer !== 'plans') return;
+  const c = debug.command;
+  if (c) {
+    ctx.font = `700 ${Math.max(10, Math.round(rad * 1.1))}px ${FONT()}`; ctx.textAlign = 'center';
+    for (const u of debug.units) if (u.l === level && u.active) {
+      const tag = u.id === c.id ? 'К' : c.fire.includes(u.id) ? 'О' : c.maneuver.includes(u.id) ? 'М' : '';
+      if (tag) { ctx.fillStyle = u.id === c.id ? '#ffffff' : COLORS.enemy; ctx.fillText(tag, mx(u.px) - rad - 6, my(u.py) - rad - 4); }
+    }
+    const t = view.units.find(u => u.id === c.target && u.active) ?? debug.knowledge.find(k => k.id === c.target);
+    if (t && t.l === level) {
+      ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5;
+      for (const rr of [rad + 7, rad + 11]) { ctx.beginPath(); ctx.arc(mx(t.px), my(t.py), rr, 0, Math.PI * 2); ctx.stroke(); }
+    }
+  }
+  for (const d of debug.decisions) {
+    if (d.from[2] !== level) continue;
+    const [fx, fy] = [sx(d.from[0] + 0.5), sy(d.from[1] + 0.5)], [tx, ty] = [sx(d.chosen.x + 0.5), sy(d.chosen.y + 0.5)];
+    ctx.strokeStyle = d.id === debugUnit ? '#fff' : 'rgba(230,178,52,0.85)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(fx, fy); ctx.lineTo(tx, ty); ctx.stroke();
+    const a = Math.atan2(ty - fy, tx - fx);
+    if (Math.hypot(tx - fx, ty - fy) > 2) {
+      ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(tx - 8 * Math.cos(a - 0.4), ty - 8 * Math.sin(a - 0.4));
+      ctx.lineTo(tx - 8 * Math.cos(a + 0.4), ty - 8 * Math.sin(a + 0.4)); ctx.closePath(); ctx.fillStyle = ctx.strokeStyle; ctx.fill();
+    }
+    if (d.id !== debugUnit) continue;
+    ctx.font = `700 ${Math.max(10, Math.round(s * 0.45))}px ${FONT()}`;
+    d.top.forEach((p, i) => {
+      if (p.l !== level) return;
+      ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(sx(p.x) + 2, sy(p.y) + 2, s - 4, s - 4);
+      ctx.fillStyle = '#fff'; ctx.fillText(String(i + 1), sx(p.x + 0.5), sy(p.y + 0.55));
+    });
+  }
+}
+
+function status(x, y, rad, u) {
+  if (u.suppLevel > 0) {
+    ctx.strokeStyle = u.suppLevel === 2 ? COLORS.bad : COLORS.warn; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.arc(x, y, rad + 5, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, u.supp / 100)); ctx.stroke();
+  }
+  const w = rad * 2;
+  ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(x - rad, y + rad + 2, w, 3);
+  ctx.fillStyle = COLORS.good; ctx.fillRect(x - rad, y + rad + 2, w * u.health / u.maxHealth, 3);
+}
+
+let animating = false;
+function animate() {
+  if (animating) return;
+  animating = true;
+  const step = () => { draw(); if (tracers.length || blasts.length) requestAnimationFrame(step); else animating = false; };
+  requestAnimationFrame(step);
+}
+
+// ───────── Касания: тап — выбор / карточка / приказ, палец — сдвиг, два пальца — масштаб ─────────
+const pointers = new Map();
+let moved = false, pinch = null;
+canvas.addEventListener('pointerdown', e => {
+  canvas.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY });
+  if (pointers.size === 1) moved = false;
+  if (pointers.size === 2) { moved = true; pinch = pinchState(); }
+});
+canvas.addEventListener('pointermove', e => {
+  const p = pointers.get(e.pointerId); if (!p) return;
+  if (pointers.size === 1) {
+    if (Math.hypot(e.clientX - p.x0, e.clientY - p.y0) > 8) moved = true;
+    if (moved) { cam.ox += e.clientX - p.x; cam.oy += e.clientY - p.y; draw(); }
+  }
+  p.x = e.clientX; p.y = e.clientY;
+  if (pointers.size === 2 && pinch) {
+    const now = pinchState();
+    zoomAt(now.cx, now.cy, now.d / pinch.d, now.cx - pinch.cx, now.cy - pinch.cy);
+    pinch = now;
+  }
+});
+const end = e => {
+  const had = pointers.has(e.pointerId);
+  pointers.delete(e.pointerId);
+  if (pointers.size < 2) pinch = null;
+  if (had && pointers.size === 0 && !moved && e.type === 'pointerup') {
+    const r = canvas.getBoundingClientRect();
+    const x = Math.floor((e.clientX - r.left - cam.ox) / cam.s), y = Math.floor((e.clientY - r.top - cam.oy) / cam.s);
+    if (map && x >= 0 && y >= 0 && x < map.w && y < map.h) tap({ x, y, l: level });
+  }
+};
+canvas.addEventListener('pointerup', end);
+canvas.addEventListener('pointercancel', end);
+canvas.addEventListener('dblclick', () => fit());
+function pinchState() {
+  const [a, b] = [...pointers.values()], r = canvas.getBoundingClientRect();
+  return { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, cx: (a.x + b.x) / 2 - r.left, cy: (a.y + b.y) / 2 - r.top };
+}
+function zoomAt(cx, cy, k, dx = 0, dy = 0) {
+  const s = Math.max(5, Math.min(90, cam.s * k)); k = s / cam.s;
+  cam.ox = cx - (cx - cam.ox) * k + dx; cam.oy = cy - (cy - cam.oy) * k + dy; cam.s = s;
+  draw();
+}
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const r = canvas.getBoundingClientRect();
+  zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 1.12 : 1 / 1.12);
+}, { passive: false });
+
+// ───────── Листы ─────────
+function openSheet(id) {
+  $('sheetBack').hidden = false; $(id).hidden = false;
+  if (id === 'logSheet') $(id).scrollTop = $(id).scrollHeight;
+  if (id === 'menuSheet') {
+    $('campaignMenu').hidden = !inCampaign; $('quickMenu').hidden = inCampaign;
+    $('retreatBtn').disabled = !view.campaign || view.over;
+    if (inCampaign) $('campaignMenuNote').textContent = `${map.name}: ${view.defend ? `удержаться ${view.turnLimit} ходов` : `выбить противника за ${view.turnLimit} ходов`}, сейчас ход ${view.turn}.`;
+    const next = seed + 1, i = (next - 1) % 8;
+    const names = ['штурм опорника', 'оборона опорника', 'лесополоса', 'оборона лесополосы', 'встречный бой', 'встречный бой (держим рубеж)', 'штурм зданий', 'оборона зданий'];
+    $('nextMission').textContent = `Сейчас: ${map.name}. Следующий бой: ${names[i]}, новая карта.`;
+  }
+}
+function closeSheets() { $('sheetBack').hidden = true; $('menuSheet').hidden = true; $('logSheet').hidden = true; }
+
+// ───────── Кнопки ─────────
+$('menuBtn').onclick = () => openSheet('menuSheet');
+$('logBtn').onclick = () => openSheet('logSheet');
+$('sheetBack').onclick = closeSheets;
+document.querySelectorAll('.closeSheet').forEach(b => b.onclick = closeSheets);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheets(); });
+$('debugChip').onclick = () => { layer = 'none'; refresh(); };
+$('newBattle').onclick = () => { closeSheets(); newBattle(seed + 1); };
+try { const v = localStorage.getItem('squadLevel'); if (v) $('squadLevel').value = v; } catch (e) {}
+$('squadLevel').onchange = () => { try { localStorage.setItem('squadLevel', $('squadLevel').value); } catch (e) {} };
+$('endTurn').onclick = () => {
+  if (view.over && view.campaign) { finish(); return; }
+  if (view.deploying) { run(api.BeginBattle()); log('Бой начат.'); return; }
+  $('endTurn').disabled = true; $('turnLine').textContent = 'ходит противник…'; $('context').className = 'hint'; $('context').textContent = 'Ходит противник…';
+  setTimeout(() => run(api.EndTurn()), 30);   // дать странице перерисоваться до долгого хода ИИ
+};
+document.querySelectorAll('#modeRow button').forEach(b => b.onclick = () => { mode = b.dataset.mode; focus = null; preview = null; renderContext(); renderControls(); draw(); });
+document.querySelectorAll('#posRow button').forEach(b => b.onclick = () => sel && run(api.SetPosition(sel, b.dataset.pos)));
+document.querySelectorAll('#moveRow button').forEach(b => b.onclick = () => { movement = b.dataset.move; focus = null; preview = null; refresh(); });
+document.querySelectorAll('#fireRow button').forEach(b => b.onclick = () => {
+  fireMode = b.dataset.fire;
+  reshot();
+  renderContext(); renderControls(); draw();
+});
+document.querySelectorAll('#layerRow button').forEach(b => b.onclick = () => { layer = b.dataset.layer; refresh(); });
+$('aiVersion').onchange = $('aiLevel').onchange = $('aiCommander').onchange = () => {
+  const info = JSON.parse(api.SetAi($('aiVersion').value, $('aiLevel').value, $('aiCommander').value));
+  $('aiLevel').disabled = $('aiCommander').disabled = info.version !== 'v3';
+  log(`ИИ противника: ${info.version === 'v3' ? 'фазы 3, ' + $('aiLevel').selectedOptions[0].text + ', ' + $('aiCommander').selectedOptions[0].text.toLowerCase() : 'фазы 2'}.`);
+  refresh();
+};
+
+// ───────── Кампания (шаг 9): главный экран → база → бой → итоги ─────────
+// Состояние кампании целиком — в localStorage (save из ответа моста). Пока идёт бой, там же — кто выбран: перезагрузка
+// страницы начинает этот бой заново (тот же сид — та же карта и тот же противник).
+const SAVE = 'treeline.campaign', BATTLE = 'treeline.mission';
+const store = {
+  get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set: (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) {} },
+};
+let camp = null, campInfo = null, tab = 'squad', picked = [], lastChosen = [], inCampaign = false, armedNew = '', shown = '';
+const TIER = { Mobilized: 'М', Contract: 'К', Elite: 'Э' };
+const TIER_NAME = { Mobilized: 'мобилизованный', Contract: 'контрактник', Elite: 'элита' };
+const STAT = [['Aim', 'Меткость', 'Мет'], ['Reaction', 'Реакция', 'Реак'], ['Stamina', 'Выносливость', 'Вын'], ['Coolness', 'Хладнокровие', 'Хлад'], ['Perception', 'Восприятие', 'Вос']];
+
+function screen(id) {
+  for (const s of ['startScreen', 'baseScreen', 'resultScreen']) $(s).hidden = s !== id;
+}
+
+function savedSummary() {
+  try { const s = JSON.parse(store.get(SAVE)); return s && s.roster ? s : null; } catch (e) { return null; }
+}
+
+function showStart(msg) {
+  inCampaign = false; armedNew = '';
+  campInfo ??= JSON.parse(api.CampaignInfo());
+  const s = savedSummary(), n = campInfo.missions.length;
+  $('continueCard').hidden = !s;
+  // В сохранении — формат данных (camelCase): статус «active» / «completed» / «wiped».
+  if (s) $('continueText').textContent = s.status && s.status !== 'active'
+    ? `Кампания окончена, день ${s.day}. Можно посмотреть базу.`
+    : `День ${s.day} · миссия ${Math.min(s.missionIndex + 1, n)} из ${n}: ${campInfo.missions[Math.min(s.missionIndex, n - 1)].name}`;
+  $('newWarn').textContent = s ? 'Заменит сохранённую — нажать дважды.' : 'Сторона — свой стартовый отряд и склад.';
+  $('factionRow').innerHTML = campInfo.factions.map(f => `<button type="button" data-faction="${esc(f.id)}">${esc(f.name)}</button>`).join('');
+  $('factionRow').querySelectorAll('button').forEach(b => b.onclick = () => {
+    if (s && armedNew !== b.dataset.faction) { armedNew = b.dataset.faction; b.textContent = 'Точно? Ещё раз'; return; }
+    newCampaign(b.dataset.faction);
+  });
+  $('startMsg').textContent = msg || '';
+  screen('startScreen');
+}
+
+function applyBase(json) {
+  const r = JSON.parse(json);
+  if (r.save) { camp = r; store.set(SAVE, r.save); }
+  return r;
+}
+
+function newCampaign(faction) {
+  // Сид кампании выбирается один раз при старте; дальше всё детерминировано (ГСЧ кампании в сохранении).
+  const s = 1 + Math.floor(Math.random() * 999999);
+  applyBase(api.CampaignNew(s, faction));
+  store.set(BATTLE, null); picked = []; tab = 'squad'; shown = '';
+  showBase('Кампания начата.');
+}
+
+function continueCampaign() {
+  const r = JSON.parse(api.CampaignLoad(store.get(SAVE) || ''));
+  if (!r.save) { showStart(r.error || 'Сохранение не читается.'); return; }
+  camp = r; picked = [];
+  const pending = store.get(BATTLE);
+  if (pending && camp.status === 'Active') startMission(pending.split(','), 'Бой не был закончен — начат заново.');
+  else showBase();
+}
+
+function showBase(msg) { inCampaign = true; screen('baseScreen'); renderBase(msg); }
+
+// Действие на базе: колонки остаются на той же прокрутке.
+function act(action, a = '', b = '', c = '') {
+  const cols = [...$('baseBody').querySelectorAll('.col')].map(x => x.scrollTop);
+  const r = applyBase(api.CampaignAct(action, String(a), String(b), String(c)));
+  renderBase(r.ok ? '' : r.error);
+  $('baseBody').querySelectorAll('.col').forEach((x, i) => x.scrollTop = cols[i] ?? 0);
+}
+
+function statusOf(s) {
+  const bits = [];
+  if (!s.weapon) bits.push('<span class="bad">без оружия</span>');
+  if (s.healDays > 0) bits.push(`<span class="warn">лечится ${s.healDays} дн.</span>`);
+  if (s.injuries.length) bits.push(`<span class="bad">травм: ${s.injuries.length}</span>`);
+  if (s.perkPoints > 0) bits.push(`<span class="acc">очко перка</span>`);
+  if (s.statRaises > 0) bits.push(`<span class="acc">повышение</span>`);
+  if (!bits.length) bits.push(esc(s.weapon));
+  return bits.join(' · ');
+}
+
+function squadList() {
+  const over = camp.status !== 'Active';
+  return camp.roster.map(s => {
+    const ready = camp.ready.includes(s.id), on = picked.includes(s.id);
+    const go = over ? '' : `<button type="button" class="go" data-pick="${esc(s.id)}" aria-pressed="${on}" ${ready ? '' : 'disabled'}>${on ? 'В бою' : 'В бой'}</button>`;
+    return `<div class="srow${ready ? '' : ' off'}"><button type="button" class="who" data-show="${esc(s.id)}" aria-pressed="${s.id === shown}">
+      <span class="tierDot" title="${TIER_NAME[s.tier]}">${TIER[s.tier]}</span><span class="nm">${esc(s.name)}</span><span class="lv">ур. ${s.level}</span>
+      <span class="st">${statusOf(s)}</span></button>${go}</div>`;
+  }).join('');
+}
+
+function slotHtml(s, slot, label, current) {
+  const opts = s.equip[slot];
+  const now = current ? esc(current) : '—';
+  if (!opts.length) return `<div class="slot"><span class="label">${label}</span><span>${now}</span></div>`;
+  return `<div class="slot"><span class="label">${label}</span><select data-equip="${esc(s.id)}" aria-label="${label}">
+    <option value="" selected>${now}</option>${opts.map(o => `<option value="${esc(o.id)}">→ ${esc(o.name)} (склад: ${o.count})</option>`).join('')}</select></div>`;
+}
+
+function dossier(s) {
+  if (!s) return '<p class="note">В отряде никого.</p>';
+  const xp = s.nextXp ? `опыт ${s.xp} / ${s.nextXp}` : `опыт ${s.xp}`;
+  const who = [TIER_NAME[s.tier], s.role, ...s.traits].filter(Boolean).map(esc).join(', ') + (s.hiddenTraits ? ` · скрытых черт: ${s.hiddenTraits}` : '');
+  const stats = `<div class="stats">${STAT.map(([k, n]) => `<div><b>${s.stats[k]}</b><span>${n}</span></div>`).join('')}</div>`;
+  const health = [s.healDays > 0 ? `<span class="warn">лечится ещё ${s.healDays} дн. — в бой с неполным здоровьем</span>` : '',
+    s.injuries.length ? `<span class="bad">травмы: ${s.injuries.map(i => `${esc(i.name)} (${i.days > 0 ? i.days + ' дн.' : 'навсегда'})`).join(', ')}</span>` : '']
+    .filter(Boolean).join('<br>');
+  const perkPick = s.perkPoints > 0 ? `<h2 class="sec">Очко перка${s.perkPoints > 1 ? ` · ${s.perkPoints}` : ''}</h2>` + (s.canPerk.length
+    ? `<div class="perkList">${s.canPerk.map(p => `<button type="button" data-perk="${esc(p.id)}" data-who="${esc(s.id)}"><b>${esc(p.name)}</b><small>${esc(p.branch)}, ярус ${p.tier}. ${esc(p.text)}</small></button>`).join('')}</div>`
+    : `<p class="note">Сейчас взять нечего.</p>`) : '';
+  const raise = s.statRaises > 0 ? `<h2 class="sec">Повышение${s.statRaises > 1 ? ` · ${s.statRaises}` : ''} — две разные, каждая +2…4</h2>
+    <div class="raise"><select data-raise1="${esc(s.id)}" aria-label="Первая">${STAT.map(([k, n], i) => `<option value="${k}" ${i === 0 ? 'selected' : ''}>${n}</option>`).join('')}</select>
+    <select data-raise2="${esc(s.id)}" aria-label="Вторая">${STAT.map(([k, n], i) => `<option value="${k}" ${i === 1 ? 'selected' : ''}>${n}</option>`).join('')}</select>
+    <button type="button" data-raise="${esc(s.id)}">Повысить</button></div>` : '';
+  return `<div class="dossier">
+    <div><h1 class="big">${esc(s.name)}</h1><div class="line">${who}</div><div class="line num">уровень ${s.level} · ${xp}</div></div>
+    ${stats}${health ? `<div class="line">${health}</div>` : ''}
+    ${perkPick}${raise}
+    <h2 class="sec">Снаряжение</h2>
+    ${slotHtml(s, 'weapon', 'Оружие', s.weapon)}${slotHtml(s, 'vest', 'Жилет', s.vest)}${slotHtml(s, 'helmet', 'Шлем', s.helmet)}${slotHtml(s, 'module', 'Модуль', s.modules.join(', '))}
+    <div class="kit">магазинов ${s.mags} · аптечек ${s.medkits} · гранат ${s.grenades} · дым ${s.smokes} — пополняются со склада сами</div>
+    ${s.perks.length ? `<h2 class="sec">Перки</h2><div class="line">${s.perks.map(esc).join(', ')}</div>` : ''}
+  </div>`;
+}
+
+function stockCols() {
+  const stock = camp.stock.map(i => `<div class="it"><span>${esc(i.name)}</span><span class="num">${i.count}</span>${i.sell != null ? `<button type="button" data-sell="${esc(i.id)}">Продать · ${i.sell}</button>` : ''}</div>`).join('');
+  const kinds = [['weapon', 'Оружие'], ['vest', 'Жилеты'], ['helmet', 'Шлемы'], ['module', 'Модули'], ['ammo', 'Патроны'], ['supply', 'Расходники']];
+  const buy = kinds.map(([k, n]) => {
+    const list = camp.buy.filter(b => b.kind === k);
+    return list.length ? `<h2 class="sec">${n}</h2><div class="items">${list.map(b => `<div class="it"><span>${esc(b.name)}${b.box ? ` <span class="num">· ${b.box} шт.</span>` : ''}</span><button type="button" data-buy="${esc(b.id)}" ${camp.points < b.price ? 'disabled' : ''}>Купить · ${b.price}</button></div>`).join('')}</div>` : '';
+  }).join('');
+  return `<div class="col"><h2 class="sec">Склад</h2><div class="items">${stock || '<p class="note">Пусто.</p>'}</div></div><div class="col"><h2 class="sec" style="margin-top:0">Поставки — цена в очках операции</h2>${buy}</div>`;
+}
+
+function recruitCol() {
+  const list = camp.candidates.length ? camp.candidates.map(c => `<div class="cand">
+      <span class="tierDot">${TIER[c.tier]}</span><span class="nm">${esc(c.name)} <span class="num" style="font-weight:400;color:var(--muted)">ур. ${c.level}</span></span>
+      <button type="button" data-hire="${c.index}" ${camp.points < c.price ? 'disabled' : ''}>Нанять · ${c.price}</button>
+      <span class="sub">${[TIER_NAME[c.tier], c.role, ...c.traits].filter(Boolean).map(esc).join(', ')} · <span class="num">${STAT.filter(([k]) => k in c.stats).map(([k, , short]) => `${short} ${c.stats[k]}`).join(' · ')}</span></span>
+    </div>`).join('') : `<p class="note">Кандидатов нет — новые появятся после боя.</p>`;
+  return `<div class="col"><h2 class="sec" style="margin-top:0">Кандидаты — приходят с автоматом, без брони</h2>${list}</div>`;
+}
+
+function missionLine(c) {
+  const m = c.mission;
+  if (c.status !== 'Active') return `<b>${c.status === 'Completed' ? 'Кампания пройдена.' : 'В отряде никого не осталось.'}</b> <span class="note">Новая — через «Выход».</span>`;
+  const groups = {};
+  for (const e of m.enemies) { const k = `${TIER[e.tier]} ${e.weapon}${e.commander ? ' (командир)' : ''}`; groups[k] = (groups[k] || 0) + 1; }
+  const foes = Object.entries(groups).map(([k, n]) => `${esc(k)}${n > 1 ? ' ×' + n : ''}`).join(', ');
+  return `<div style="font-weight:700;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.missionIndex + 1}/${c.missionCount} · ${esc(m.name.replace(/^\d+\.\s*/, ''))}</div>
+    <div class="note" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${m.defend ? `удержаться ${m.turns} ходов` : `выбить за ${m.turns} ходов`} · ${esc(m.map)} · против: ${foes}</div>`;
+}
+
+function renderBase(msg) {
+  const c = camp, m = c.mission, over = c.status !== 'Active';
+  $('baseNums').innerHTML = `<span>${esc(c.faction)}</span><span>день <b>${c.day}</b></span><span class="pts">ОО <b>${c.points}</b></span><span>в строю <b>${c.roster.length}</b></span><span>погибло <b>${c.fallen}</b></span>`;
+  picked = picked.filter(id => c.ready.includes(id)).slice(0, m.squad);
+  if (!picked.length) picked = c.ready.slice(0, m.squad);
+  if (!c.roster.find(s => s.id === shown)) shown = c.roster[0]?.id ?? '';
+  $('missionCard').innerHTML = missionLine(c);
+  $('baseTabs').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', b.dataset.tab === tab));
+  $('baseMsg').textContent = msg || '';
+  const body = $('baseBody');
+  body.className = 'sbody' + (tab === 'recruit' ? ' one' : '');
+  body.innerHTML = tab === 'squad' ? `<div class="col">${squadList()}</div><div class="col">${dossier(c.roster.find(s => s.id === shown))}</div>`
+    : tab === 'stock' ? stockCols() : recruitCol();
+  body.querySelectorAll('[data-show]').forEach(x => x.onclick = () => { shown = x.dataset.show; renderBase(); });
+  body.querySelectorAll('[data-pick]').forEach(x => x.onclick = () => {
+    const id = x.dataset.pick, on = picked.includes(id);
+    if (!on && picked.length >= m.squad) { $('baseMsg').textContent = `В этот бой — не больше ${m.squad}. Снимите кого-то.`; return; }
+    picked = on ? picked.filter(p => p !== id) : [...picked, id];
+    const cols = [...body.querySelectorAll('.col')].map(x => x.scrollTop);
+    renderBase();
+    body.querySelectorAll('.col').forEach((x, i) => x.scrollTop = cols[i] ?? 0);
+  });
+  body.querySelectorAll('[data-perk]').forEach(x => x.onclick = () => act('perk', x.dataset.who, x.dataset.perk));
+  body.querySelectorAll('[data-raise]').forEach(x => x.onclick = () => {
+    const id = x.dataset.raise;
+    act('raise', id, body.querySelector(`[data-raise1="${id}"]`).value, body.querySelector(`[data-raise2="${id}"]`).value);
+  });
+  body.querySelectorAll('[data-equip]').forEach(x => x.onchange = () => x.value && act('equip', x.dataset.equip, x.value));
+  body.querySelectorAll('[data-hire]').forEach(x => x.onclick = () => act('hire', x.dataset.hire));
+  body.querySelectorAll('[data-buy]').forEach(x => x.onclick = () => act('buy', x.dataset.buy));
+  body.querySelectorAll('[data-sell]').forEach(x => x.onclick = () => act('sell', x.dataset.sell));
+  $('pickNote').textContent = over ? '' : `${picked.length}/${m.squad}`;
+  $('goMission').disabled = over || !picked.length;
+}
+
+function startMission(ids, note) {
+  const r = JSON.parse(api.CampaignMission(ids.join(',')));
+  if (r.ok === false) { store.set(BATTLE, null); showBase(r.error); return; }
+  lastChosen = ids; store.set(BATTLE, ids.join(','));
+  inCampaign = true; screen(null);
+  enterBattle(r, note);
+}
+
+function finish() {
+  const r = JSON.parse(api.CampaignFinish());
+  if (!r.ok) { log(`[color=#e2a83c]${r.error}[/color]`); return; }
+  $('resultMission').textContent = r.mission;
+  $('resultHead').className = 'result ' + (r.success ? 'ok' : 'fail');
+  $('resultHead').textContent = r.success ? 'Задача выполнена' : 'Задача не выполнена';
+  $('resultLines').innerHTML = r.lines.map(l => `<li>${esc(l)}</li>`).join('')
+    + (r.status === 'Completed' ? '<li><b>Лестница пройдена — кампания окончена.</b></li>' : r.status === 'Wiped' ? '<li><b>В отряде никого не осталось.</b></li>' : '');
+  screen('resultScreen');
+}
+
+$('baseTabs').querySelectorAll('button').forEach(b => b.onclick = () => { tab = b.dataset.tab; renderBase(); });
+$('goMission').onclick = () => startMission(picked, '');
+$('baseHome').onclick = () => showStart();
+$('continueBtn').onclick = continueCampaign;
+$('quickBtn').onclick = () => newBattle(seed);
+$('commitBtn').onclick = () => { applyBase(api.CampaignCommit()); store.set(BATTLE, null); picked = []; showBase('Итоги сохранены.'); };
+$('replayBtn').onclick = () => startMission(lastChosen, 'Бой переигрывается: та же карта, тот же противник.');
+$('retreatBtn').onclick = () => { closeSheets(); const r = JSON.parse(api.CampaignRetreat()); if (r.ok) { refresh(); finish(); } };
+$('menuHome').onclick = () => { closeSheets(); showStart('Бой не засчитан: «Продолжить» начнёт его заново.'); };
+$('quickHome').onclick = () => { closeSheets(); showStart(); };
+
+// Для самопроверки в браузере без пальцев (headless): те же действия, что касание.
+window.sandbox = { tap: (x, y) => tap({ x, y, l: level }), view: () => view, debug: () => debug,
+  layer: l => { layer = l; refresh(); }, endTurn: () => run(api.EndTurn()), confirm: () => confirm(),
+  camp: () => camp, begin: () => run(api.BeginBattle()), finish: () => finish() };
+
+new ResizeObserver(resize).observe(canvas);
+boot();
+</script>

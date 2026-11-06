@@ -1,0 +1,38 @@
+{
+  "mainAssemblyName": "WebSandbox",
+  "resources": {
+    "hash": "sha256-PsVNKZQVnnKTHJJPYgIDWmeI+e/Cj8rZorICu+pu4h8=",
+    "jsModuleNative": {
+      "dotnet.native.8.0.33.bb0byn1wr2.js": "sha256-1DK+nm58uZjvv7U2c/UlUp1zFjeBZnqXHFHBX/W1igo="
+    },
+    "jsModuleRuntime": {
+      "dotnet.runtime.8.0.33.yviqzkho78.js": "sha256-aa75BhVU2iAzc0Nj93nvwfQ2raXDjiW4VBNfRLHRJgM="
+    },
+    "wasmNative": {
+      "dotnet.native.wasm": "sha256-nuafJqZB4VQTUYFCIRJ7Km/BqoRcArOifoPpa1cW/Mk="
+    },
+    "assembly": {
+      "System.Collections.Concurrent.wasm": "sha256-x98VnnuDz7RU0wP3SI7F82fJAMH4ybpogM5Vx+u5i9g=",
+      "System.Collections.wasm": "sha256-iKHS+uSVJBKip1pZGiL2tK833pvtE5Da0+sIQVwdvEE=",
+      "System.Linq.wasm": "sha256-A9jYTQK860U6ysFukhcAKm418hvrcWgy/an9YtuLZs8=",
+      "System.Memory.wasm": "sha256-aq00B3W1UPKEDu0BrCgCwxfoOez5Bd0nygVoyvljd3Y=",
+      "System.Private.CoreLib.wasm": "sha256-6IbuZ2TWqPSO/rxVPW1RRohcPw2DzIn/rNSLNmDy/hk=",
+      "System.Private.Uri.wasm": "sha256-cwurZbgh/b4hTfDk+ZVLvb4donPo2MF/SYedGZrK0mw=",
+      "System.Runtime.InteropServices.JavaScript.wasm": "sha256-xfUk31g9t6zetf8qi/RwVF1OiKv80SzmpbgRRd0Iwfg=",
+      "System.Runtime.wasm": "sha256-v6qzZKzw8nfj7puL7E165kL1CFMthM0f3aRwlpQyMfs=",
+      "System.Text.Encodings.Web.wasm": "sha256-J/o7HQXpMzyysX3aCdYw5Rvt15KNnawhancoTbvhsuY=",
+      "System.Text.Json.wasm": "sha256-phZ2KbD5693SD949Rg3vNrz85GS2Fgl2n0Q9O80F5Aw=",
+      "System.Text.RegularExpressions.wasm": "sha256-jsxsIhxIGqo2wpEciDEO9aejHvOTt5kZoPQh1Ksx5FQ=",
+      "System.Threading.wasm": "sha256-P2UQCOa8KU3HIZpPusrX3jila5IAftweqlirEomDdp8=",
+      "Treeline.AI.wasm": "sha256-pT1S1lwGQyat8uDtKnLBhSUolwwtKZEfJHSOYdALq8Y=",
+      "Treeline.Campaign.wasm": "sha256-AwFm2tBcAW+VG9sM8eCp3whstkhOsjZZB04QVb/yluI=",
+      "Treeline.Rules.wasm": "sha256-jCKNNTcIBQw9W+xB5TQpZMuuGGGDi+UzTNY4kMHJaYE=",
+      "Treeline.Sim.wasm": "sha256-6ZGG43yezrLlDA6c6yVL4NqdyZ6f0cu8OfQO+rVSdE4=",
+      "WebSandbox.wasm": "sha256-/K7I6jgeEdC2qxiKZu6bp3UPvHa6CwT9e8G1EEgvBXY="
+    }
+  },
+  "cacheBootResources": true,
+  "debugLevel": 0,
+  "linkerEnabled": true,
+  "globalizationMode": "invariant"
+}
