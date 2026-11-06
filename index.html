@@ -117,12 +117,13 @@ select { background: var(--raise); border: 1px solid var(--line); border-radius:
 #context.hint .profile { font: 11px/1.4 var(--f-num); color: var(--dim); }
 #context.hint button { flex: 1 1 auto; min-height: 32px; font-size: 13px; }
 #context.hint button small { color: var(--muted); }
-#context .head { display: flex; align-items: center; gap: 8px; }
-#context .head > div { flex: 1; min-width: 0; }
+#context .head { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
+#context .head > div { min-width: 0; }
 #context .big { font: 700 24px var(--f-num); color: var(--accent); line-height: 1.05; }
 #context .sub { font-size: 13px; color: var(--muted); }
-#context .actions { display: flex; gap: 6px; flex: none; }
-#context .actions button { min-height: 40px; }
+#context .actions { display: flex; gap: 6px; }
+#context .actions button { min-height: 40px; flex: 1 1 0; }
+#context .actions button.ghost { flex: 0 1 auto; }
 #context .aimRow { margin-top: 4px; }
 #context .err { color: var(--warn); font-size: 13px; }
 #context details { font-size: 12.5px; color: var(--muted); }
@@ -737,10 +738,16 @@ function renderContext() {
     go = 'По позиции';
   }
   if (!preview.ok && preview.error) body += `<div class="err">${esc(preview.error)}</div>`;
+  // Перезарядка — и в карточке огня: иначе при пустом магазине кнопка пряталась вместе с подсказкой.
+  const me = view.units.find(x => x.id === sel);
+  const canReload = !!me && view.ours && !view.over && !view.deploying && me.mag < me.magSize && me.spare > 0;
+  if (canReload && ['shot', 'last', 'cell'].includes(preview.kind))
+    body += `<button type="button" id="reloadCard">Перезарядить · ${me.mag}/${me.magSize}, в запасе ${me.spare}</button>`;
   const actions = `<div class="actions">${preview.ok && go ? `<button type="button" class="${preview.kind === 'move' ? 'primary' : 'danger'}" id="go">${go}</button>` : ''}<button type="button" class="ghost" id="cancel">Отмена</button></div>`;
   box.innerHTML = `<div class="head"><div>${head}</div>${actions}</div>${body}`;
   $('go')?.addEventListener('click', confirm);
   $('cancel').addEventListener('click', cancel);
+  $('reloadCard')?.addEventListener('click', () => sel && run(api.Reload(sel)));
   box.querySelectorAll('.aimRow button').forEach(b => b.onclick = () => { aim = b.dataset.aim; reshot(); renderContext(); draw(); });
 }
 
